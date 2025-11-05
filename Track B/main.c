@@ -13,6 +13,11 @@
 #define FILE_SIZE (1024 * 1024 * 1024) // 1GB test file
 #define ITERATIONS 1000  // Run multiple iterations for better timing
 
+
+// Known hardware latencies (in microseconds) - adjust based on your SSD specs
+#define SSD_READ_LATENCY_US 96.0/16    // Random access 4k read for Samsung 980 Pro 2 TB SSD
+#define SSD_WRITE_LATENCY_US 62.0/16   // random access 4k write for Samsung 980 Pro 2 TB SSD
+
 typedef struct {
     int opcode;      // 0: read, 1: write
     LONGLONG lba;    // Logical Block Address
@@ -24,7 +29,11 @@ typedef struct {
     ULONGLONG kernel_cycles;
     ULONGLONG user_cycles;
     ULONGLONG total_cycles;
+    ULONGLONG estimated_block_layer_cycles;
+    ULONGLONG estimated_hardware_cycles;
     DWORD io_count;
+    DWORD read_count;
+    DWORD write_count;
     ULONGLONG total_bytes;
 } PERFORMANCE_STATS;
 
@@ -41,7 +50,7 @@ BOOL ReadCommandsFromFile(const char* filename);
 BOOL CreateTestFile(const char* filename);
 void CloseTestFile();
 void RunCommandsSoftware();
-void RunSingleCommand(IO_COMMAND* cmd, ULONGLONG* kernel_cycles, ULONGLONG* user_cycles);
+void RunSingleCommandBasic(IO_COMMAND* cmd);
 ULONGLONG GetCurrentCycleCount();
 ULONGLONG MeasureSystemCallOverhead();
 void PrintStatistics();
@@ -52,14 +61,35 @@ ULONGLONG FileTimeToULongLong(FILETIME ft) {
     return ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
 }
 
+// Convert microseconds to cycles based on CPU frequency
+ULONGLONG MicrosecondsToCycles(double microseconds) {
+    return (ULONGLONG)(microseconds * cpu_frequency_ghz * 1000.0);
+}
+
+// Estimate hardware latency in cycles based on operation type
+ULONGLONG EstimateHardwareLatencyCycles(int opcode, DWORD length) {
+    double hardware_latency_us;
+    
+    if (opcode == 0) { // Read
+        hardware_latency_us = SSD_READ_LATENCY_US;
+    } else { // Write
+        hardware_latency_us = SSD_WRITE_LATENCY_US;
+    }
+
+    return MicrosecondsToCycles(hardware_latency_us);
+}
+
 int main() {
     printf("Windows Block Layer Performance Measurement\n");
     printf("CPU Frequency: %.1f GHz\n", cpu_frequency_ghz);
+    printf("Samsung 980 Pro 2TB Latencies:\n");
+    printf("  Read: %.1f us, Write: %.1f us\n", SSD_READ_LATENCY_US, SSD_WRITE_LATENCY_US);
     printf("==========================================\n\n");
 
     // Measure system call overhead first
     ULONGLONG syscall_overhead = MeasureSystemCallOverhead();
-    printf("System call overhead: %llu cycles\n", syscall_overhead);
+    printf("System call overhead: %llu cycles (%.3f us)\n", 
+           syscall_overhead, (double)syscall_overhead / (cpu_frequency_ghz * 1000.0));
 
     // Initialize
     if (!ReadCommandsFromFile("cpu_commands.txt")) {
@@ -189,63 +219,112 @@ ULONGLONG GetCurrentCycleCount() {
 }
 
 ULONGLONG MeasureSystemCallOverhead() {
-    // Measure the overhead of a simple system call
     ULONGLONG start, end;
+    ULONGLONG min_overhead = (ULONGLONG)-1;
     FILETIME creation, exit, kernel, user;
+    // Measure multiple times and take minimum
+    for (int i = 0; i < 100; i++) {
+        start = GetCurrentCycleCount();
+        GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user);
+        end = GetCurrentCycleCount();
+        
+        ULONGLONG overhead = end - start;
+        if (overhead < min_overhead) {
+            min_overhead = overhead;
+        }
+    }
     
-    start = GetCurrentCycleCount();
-    GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user);
-    end = GetCurrentCycleCount();
-    
-    return end - start;
+    return min_overhead;
 }
 
 void RunCommandsSoftware() {
     ULONGLONG total_start_cycles = GetCurrentCycleCount();
+    FILETIME start_creation, start_exit, start_kernel, start_user;
+    
+    // Get process times BEFORE all iterations
+    if (!GetProcessTimes(GetCurrentProcess(), &start_creation, &start_exit, 
+                        &start_kernel, &start_user)) {
+        printf("Error: Failed to get initial process times\n");
+        return;
+    }
+    
+    // Initialize basic stats
+    stats.io_count = command_count * ITERATIONS;
+    stats.total_bytes = 0;
+    stats.read_count = 0;
+    stats.write_count = 0;
+    
+    // Pre-calculate totals for all iterations
+    for (int i = 0; i < command_count; i++) {
+        stats.total_bytes += commands[i].length * ITERATIONS;
+        if (commands[i].opcode == 0) {
+            stats.read_count += ITERATIONS;
+        } else {
+            stats.write_count += ITERATIONS;
+        }
+    }
     
     // Run multiple iterations for better timing accuracy
     for (int iter = 0; iter < ITERATIONS; iter++) {
         for (int i = 0; i < command_count; i++) {
-            ULONGLONG kernel_cycles = 0;
-            ULONGLONG user_cycles = 0;
-            
-            RunSingleCommand(&commands[i], &kernel_cycles, &user_cycles);
-            
-            stats.kernel_cycles += kernel_cycles;
-            stats.user_cycles += user_cycles;
-            stats.io_count++;
-            stats.total_bytes += commands[i].length;
+            RunSingleCommandBasic(&commands[i]);
         }
     }
     
     ULONGLONG total_end_cycles = GetCurrentCycleCount();
-    stats.total_cycles = total_end_cycles - total_start_cycles;
-}
-
-void RunSingleCommand(IO_COMMAND* cmd, ULONGLONG* kernel_cycles, ULONGLONG* user_cycles) {
-    LARGE_INTEGER file_offset;
-    DWORD bytes_processed;
-    BOOL result;
-    FILETIME start_creation, start_exit, start_kernel, start_user;
     FILETIME end_creation, end_exit, end_kernel, end_user;
-    ULONGLONG start_cycles, end_cycles;
     
-    // Get process times before command
-    if (!GetProcessTimes(GetCurrentProcess(), &start_creation, &start_exit, 
-                        &start_kernel, &start_user)) {
-        printf("Error: Failed to get process times\n");
+    // Get process times AFTER all iterations
+    if (!GetProcessTimes(GetCurrentProcess(), &end_creation, &end_exit, 
+                        &end_kernel, &end_user)) {
+        printf("Error: Failed to get final process times\n");
         return;
     }
     
-    start_cycles = GetCurrentCycleCount();
+    // Calculate TOTAL kernel and user time for ALL operations
+    ULONGLONG total_kernel_time_100ns = FileTimeToULongLong(end_kernel) - FileTimeToULongLong(start_kernel);
+    ULONGLONG total_user_time_100ns = FileTimeToULongLong(end_user) - FileTimeToULongLong(start_user);
     
-    // Calculate file offset (LBA is byte-based in our simulation)
+    printf("Total kernel time for all operations: %llu (100ns units)\n", total_kernel_time_100ns);
+    printf("Total user time for all operations: %llu (100ns units)\n", total_user_time_100ns);
+    
+    // Convert 100ns intervals to cycles
+    double cycles_per_100ns = cpu_frequency_ghz * 100.0;
+    stats.kernel_cycles = (ULONGLONG)(total_kernel_time_100ns * cycles_per_100ns);
+    stats.user_cycles = (ULONGLONG)(total_user_time_100ns * cycles_per_100ns);
+    stats.total_cycles = total_end_cycles - total_start_cycles;
+    
+    // Calculate estimated hardware cycles based on actual operations
+    stats.estimated_hardware_cycles = 0;
+    for (int i = 0; i < command_count; i++) {
+        ULONGLONG hardware_cycles = EstimateHardwareLatencyCycles(commands[i].opcode, commands[i].length);
+        stats.estimated_hardware_cycles += hardware_cycles * ITERATIONS;
+    }
+    
+    // Estimate block layer cycles more conservatively
+    // Use a reasonable assumption that block layer overhead is 20-50% of non-hardware kernel time
+    if (stats.kernel_cycles > stats.estimated_hardware_cycles) {
+        // If kernel time > hardware time, use 30% of the difference as block layer
+        stats.estimated_block_layer_cycles = (ULONGLONG)((stats.kernel_cycles - stats.estimated_hardware_cycles) * 0.3);
+    } else {
+        // If hardware time dominates, estimate block layer as 20% of kernel time
+        stats.estimated_block_layer_cycles = (ULONGLONG)(stats.kernel_cycles * 0.2);
+    }
+}
+
+
+
+
+void RunSingleCommandBasic(IO_COMMAND* cmd) {
+    LARGE_INTEGER file_offset;
+    DWORD bytes_processed;
+    BOOL result;
+    
+    // Calculate file offset
     file_offset.QuadPart = cmd->lba;
 
     // Set file pointer
     if (!SetFilePointerEx(test_file, file_offset, NULL, FILE_BEGIN)) {
-        printf("Error: SetFilePointerEx failed for command %d (%lu)\n", 
-               cmd->opcode, GetLastError());
         return;
     }
 
@@ -253,102 +332,111 @@ void RunSingleCommand(IO_COMMAND* cmd, ULONGLONG* kernel_cycles, ULONGLONG* user
     if (cmd->opcode == 0) { // Read operation
         result = ReadFile(test_file, test_buffer, cmd->length, 
                          &bytes_processed, NULL);
-        
-        if (!result) {
-            printf("Error: ReadFile failed at LBA %lld (%lu)\n", 
-                   cmd->lba, GetLastError());
-        } else if (ITERATIONS == 1) { // Only print for single iteration
-            printf("Read %lu bytes from LBA %lld\n", 
-                   bytes_processed, cmd->lba);
-        }
     } else { // Write operation
-        // Prepare write data (using the data field from command)
         memset(test_buffer, (BYTE)(cmd->data & 0xFF), cmd->length);
-        
         result = WriteFile(test_file, test_buffer, cmd->length, 
                           &bytes_processed, NULL);
-        
-        if (!result) {
-            printf("Error: WriteFile failed at LBA %lld (%lu)\n", 
-                   cmd->lba, GetLastError());
-        } else if (ITERATIONS == 1) { // Only print for single iteration
-            printf("Wrote %lu bytes to LBA %lld\n", 
-                   bytes_processed, cmd->lba);
-        }
+    }
+
+    if (!result) {
+        return;
     }
 
     // Force writes to disk if this was a write operation
     if (cmd->opcode == 1) {
         FlushFileBuffers(test_file);
     }
-    
-    end_cycles = GetCurrentCycleCount();
-    
-    // Get process times after command
-    if (!GetProcessTimes(GetCurrentProcess(), &end_creation, &end_exit, 
-                        &end_kernel, &end_user)) {
-        printf("Error: Failed to get process times\n");
-        return;
-    }
-    
-    // Calculate kernel and user time in cycles
-    ULONGLONG kernel_time_100ns = FileTimeToULongLong(end_kernel) - FileTimeToULongLong(start_kernel);
-    ULONGLONG user_time_100ns = FileTimeToULongLong(end_user) - FileTimeToULongLong(start_user);
-    ULONGLONG total_time_cycles = end_cycles - start_cycles;
-    
-    // Convert 100ns intervals to cycles (approximate)
-    // 100ns = 100 * 10^-9 seconds, cycles = time * frequency
-    double cycles_per_100ns = cpu_frequency_ghz * 100; // 3.9 GHz * 100 = 390 cycles per 100ns
-    
-    *kernel_cycles = (ULONGLONG)(kernel_time_100ns * cycles_per_100ns);
-    *user_cycles = (ULONGLONG)(user_time_100ns * cycles_per_100ns);
 }
 
 void PrintStatistics() {
     printf("\n=== BLOCK LAYER PERFORMANCE RESULTS ===\n");
     printf("Total iterations: %d\n", ITERATIONS);
-    printf("Total commands processed: %lu\n", stats.io_count);
+    printf("Total commands processed: %lu (%lu reads, %lu writes)\n", 
+           stats.io_count, stats.read_count, stats.write_count);
     
     // Convert cycles to time
     double total_time_seconds = (double)stats.total_cycles / (cpu_frequency_ghz * 1e9);
-    double avg_time_per_command_ms = (total_time_seconds * 1000.0) / stats.io_count;
+    double avg_time_per_command_us = (total_time_seconds * 1e6) / stats.io_count;
     
     printf("Total I/O time: %.2f milliseconds\n", total_time_seconds * 1000.0);
-    printf("Average time per command: %.2f microseconds\n", avg_time_per_command_ms * 1000.0);
+    printf("Average time per command: %.2f microseconds\n", avg_time_per_command_us);
     
     // Calculate percentages
     ULONGLONG total_cpu_cycles = stats.kernel_cycles + stats.user_cycles;
     
-    printf("\nCPU Cycle Breakdown:\n");
-    printf("Kernel cycles (block layer): %llu (%.1f%%)\n", 
+    printf("\n=== DETAILED CYCLE BREAKDOWN ===\n");
+    printf("Total CPU cycles: %llu\n", total_cpu_cycles);
+    printf("Kernel cycles (entire I/O stack): %llu (%.1f%%)\n", 
            stats.kernel_cycles, 
            total_cpu_cycles > 0 ? (double)stats.kernel_cycles / total_cpu_cycles * 100.0 : 0);
     printf("User cycles: %llu (%.1f%%)\n", 
            stats.user_cycles,
            total_cpu_cycles > 0 ? (double)stats.user_cycles / total_cpu_cycles * 100.0 : 0);
-    printf("Total CPU cycles: %llu\n", total_cpu_cycles);
     
-    // Calculate efficiency metrics
+    printf("\n=== ESTIMATED COMPONENT BREAKDOWN ===\n");
+    if (stats.kernel_cycles > 0) {
+        // Calculate what portion of TOTAL TIME (not just kernel time) is hardware vs block layer
+        double hardware_percentage_of_total = (double)stats.estimated_hardware_cycles / stats.total_cycles * 100.0;
+        double block_layer_percentage_of_total = (double)stats.estimated_block_layer_cycles / stats.total_cycles * 100.0;
+        double kernel_percentage_of_total = (double)stats.kernel_cycles / stats.total_cycles * 100.0;
+        
+        printf("Total elapsed cycles: %llu\n", stats.total_cycles);
+        printf("Estimated hardware cycles: %llu (%.1f%% of total time)\n",
+               stats.estimated_hardware_cycles, hardware_percentage_of_total);
+        printf("Estimated block layer cycles: %llu (%.1f%% of total time)\n",
+               stats.estimated_block_layer_cycles, block_layer_percentage_of_total);
+        printf("Remaining kernel cycles: %llu (%.1f%% of total time)\n",
+               stats.kernel_cycles - stats.estimated_block_layer_cycles,
+               kernel_percentage_of_total - block_layer_percentage_of_total);
+        
+        // Also show hardware as percentage of kernel time for reference
+        double hardware_percentage_of_kernel = (double)stats.estimated_hardware_cycles / stats.kernel_cycles * 100.0;
+        printf("Hardware cycles are %.1f%% of kernel time\n", hardware_percentage_of_kernel);
+        
+        if (hardware_percentage_of_kernel > 100.0) {
+            printf("NOTE: Hardware cycles > kernel time suggests:\n");
+            printf("  - Kernel time measurement may not include full hardware wait\n");
+            printf("  - Hardware latency estimates might be high for this workload\n");
+            printf("  - Some I/O may be cached or buffered\n");
+        }
+    }
+    
+    // Per-operation averages
+    if (stats.io_count > 0) {
+        double avg_kernel_cycles = (double)stats.kernel_cycles / stats.io_count;
+        double avg_block_layer_cycles = (double)stats.estimated_block_layer_cycles / stats.io_count;
+        double avg_hardware_cycles = (double)stats.estimated_hardware_cycles / stats.io_count;
+        
+        printf("\n=== PER-OPERATION AVERAGES ===\n");
+        printf("Average kernel time per I/O: %.0f cycles (%.2f us)\n", 
+               avg_kernel_cycles, avg_kernel_cycles / (cpu_frequency_ghz * 1000.0));
+        printf("Average block layer per I/O: %.0f cycles (%.2f us)\n", 
+               avg_block_layer_cycles, avg_block_layer_cycles / (cpu_frequency_ghz * 1000.0));
+        printf("Average hardware per I/O: %.0f cycles (%.2f us)\n", 
+               avg_hardware_cycles, avg_hardware_cycles / (cpu_frequency_ghz * 1000.0));
+    }
+    
+    // Calculate throughput
     double total_data_mb = (double)stats.total_bytes / (1024.0 * 1024.0);
-    double total_time_sec = total_time_seconds;
-    double data_rate_mbps = total_data_mb / total_time_sec;
+    double data_rate_mbps = total_data_mb / total_time_seconds;
     
     printf("\nThroughput: %.2f MB/s\n", data_rate_mbps);
     
-    double blocks_processed = (double)stats.total_bytes / BLOCK_SIZE;
-    if (blocks_processed > 0) {
-        double kernel_cycles_per_block = (double)stats.kernel_cycles / blocks_processed;
-        printf("Kernel overhead per 4KB block: %.0f cycles (%.2f microseconds)\n", 
-               kernel_cycles_per_block,
-               kernel_cycles_per_block / (cpu_frequency_ghz * 1000.0));
-    }
-    
     // Compare with hardware IO chip (estimated)
-    printf("\n=== HARDWARE IO CHIP ESTIMATION ===\n");
-    printf("Estimated hardware overhead: 100-500 cycles per command\n");
-    printf("Potential speedup: %.1fx - %.1fx\n", 
-           (double)stats.kernel_cycles / stats.io_count / 500.0,
-           (double)stats.kernel_cycles / stats.io_count / 100.0);
+    printf("\n=== HARDWARE ACCELERATOR COMPARISON ===\n");
+    printf("Estimated hardware accelerator overhead: 100-200 cycles per command\n");
+    if (stats.io_count > 0) {
+        double avg_block_layer_cycles = (double)stats.estimated_block_layer_cycles / stats.io_count;
+        printf("Current software block layer overhead: %.0f cycles per command\n", avg_block_layer_cycles);
+        
+        if (avg_block_layer_cycles > 100.0) {
+            double min_speedup = avg_block_layer_cycles / 200.0;
+            double max_speedup = avg_block_layer_cycles / 100.0;
+            printf("Potential speedup: %.1fx - %.1fx\n", min_speedup, max_speedup);
+        } else {
+            printf("Software overhead is already low. Hardware may not provide significant benefit.\n");
+        }
+    }
 }
 
 void Cleanup() {
