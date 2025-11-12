@@ -46,7 +46,7 @@ std::string WindowsUtils::get_cpu_info() {
     // Check for AVX2 and AVX-512
     __cpuid(cpuInfo, 7);
     has_avx2 = (cpuInfo[1] & (1 << 5)) != 0;
-    has_avx512 = (cpuInfo[1] & (1 << 16)) != 0; // AVX-512F
+    has_avx512 = (cpuInfo[1] & (1 << 16)) != 0;
     
     std::stringstream ss;
     ss << cpuBrand << " | AVX: " << (has_avx ? "Yes" : "No")
@@ -71,14 +71,14 @@ std::string WindowsUtils::get_compiler_info() {
 }
 
 double WindowsUtils::get_memory_bandwidth() {
-    return 25.6; // Conservative estimate in GB/s
+    return 50.0; // Conservative estimate in GB/s
 }
 
 size_t WindowsUtils::get_cache_size(int level) {
     switch(level) {
         case 1: return 32 * 1024;
         case 2: return 256 * 1024;
-        case 3: return 12 * 1024 * 1024; // Updated for i5-12600KF
+        case 3: return 12 * 1024 * 1024;
         default: return 0;
     }
 }

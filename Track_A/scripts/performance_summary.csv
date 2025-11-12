@@ -1,0 +1,6 @@
+Experiment,Data Points,Max GFLOP/s,Avg GFLOP/s,Best Implementation,Pass Rate,Max Error
+Speedup Analysis,8,20.6769,7.13579,SIMD (20.7 GFLOP/s),,
+Density Break Even,16,35.3822,19.81416875,SIMD (35.4 GFLOP/s),,
+Working Set Transitions,5,27.2283,11.413078,SIMD (27.2 GFLOP/s),,
+Roofline Analysis,5,27.342,16.106096,SIMD (27.3 GFLOP/s),,
+Correctness Validation,12,,,N/A,100.0%,1.0015794e-07

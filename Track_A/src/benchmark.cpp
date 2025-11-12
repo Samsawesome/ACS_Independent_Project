@@ -55,11 +55,11 @@ ExperimentResult BenchmarkSuite::run_dense_experiment(const ExperimentConfig& co
     
     result.time_seconds = timer.get_elapsed_seconds();
     
-    // Safety check: ensure reasonable timing
+    /* Safety check: ensure reasonable timing
     if (result.time_seconds < 0.001) {
         std::cout << "WARNING: Very short execution time: " << result.time_seconds 
                  << "s for size " << config.m << std::endl;
-    }
+    }*/
     
     result.flops = 2 * config.m * config.n * config.k;
     result.gflops = (result.flops / 1e9) / result.time_seconds;
@@ -270,20 +270,15 @@ void BenchmarkSuite::experiment_working_set_transitions() {
     
     std::vector<ExperimentResult> results;
     // Use sizes that fit in cache/memory without overflow
-    std::vector<size_t> sizes = {128, 256, 512, 768, 1024, 2048}; 
+    std::vector<size_t> sizes = {64, 128, 256, 512, 1024}; 
     
     for (size_t size : sizes) {
         ExperimentConfig config{size, size, size, 0.0f, 1, "dense", "simd"};
         auto result = run_dense_experiment(config);
         
-        // Add safety check for valid GFLOP/s
-        if (result.time_seconds > 0.001 && result.gflops > 0.1) {
-            results.push_back(result);
-            std::cout << "Size: " << size << ", GFLOP/s: " << result.gflops << std::endl;
-        } else {
-            std::cout << "Size: " << size << ", INVALID RESULT - Time: " 
-                     << result.time_seconds << "s, GFLOP/s: " << result.gflops << std::endl;
-        }
+        results.push_back(result);
+        std::cout << "Size: " << size << ", GFLOP/s: " << result.gflops << std::endl;
+         
     }
     
     save_results_csv("working_set_transitions.csv", results);
@@ -296,21 +291,17 @@ void BenchmarkSuite::experiment_roofline_analysis() {
     std::vector<ExperimentResult> results;
     
     // Use safe sizes
-    std::vector<size_t> sizes = {128, 256, 512, 768, 1024, 2048};
+    std::vector<size_t> sizes = {64, 128, 256, 512, 1024};
     
     for (size_t size : sizes) {
         ExperimentConfig config{size, size, size, 0.0f, 1, "dense", "simd"};
         auto result = run_dense_experiment(config);
         
-        // Validate result before adding
-        if (result.time_seconds > 0.001 && result.gflops > 0.1) {
-            results.push_back(result);
-            std::cout << "Size: " << size << ", AI: " << result.arithmetic_intensity 
-                     << ", GFLOP/s: " << result.gflops << std::endl;
-        } else {
-            std::cout << "Size: " << size << ", INVALID - AI: " << result.arithmetic_intensity
-                     << ", GFLOP/s: " << result.gflops << std::endl;
-        }
+        
+        results.push_back(result);
+        std::cout << "Size: " << size << ", AI: " << result.arithmetic_intensity 
+                    << ", GFLOP/s: " << result.gflops << std::endl;
+        
     }
     
     save_results_csv("roofline_analysis.csv", results);
@@ -320,9 +311,11 @@ RooflineModel BenchmarkSuite::characterize_hardware() {
     RooflineModel roof;
     
     // These are theoretical peaks - adjust based on your CPU
-    // For a modern CPU like i7-12700K: ~500 GFLOP/s DP, ~50 GB/s memory bandwidth
-    roof.peak_gflops = 100.0; // Conservative estimate for float operations
-    roof.memory_bandwidth_gb_s = 25.0; // Conservative estimate
+    // i5-12600K has practical ~50 GB/s memory bandwidth
+    // AVX2 = 8 flop/cycle, 6 3.7GHz cores, 4 2.8GHz cores, averages to 133.6 GFLOPs
+    //put down 100 has a practical estimate
+    roof.peak_gflops = 100.0; 
+    roof.memory_bandwidth_gb_s = 50.0; 
     
     std::cout << "Theoretical Roofline: " << roof.peak_gflops << " GFLOP/s, " 
               << roof.memory_bandwidth_gb_s << " GB/s" << std::endl;

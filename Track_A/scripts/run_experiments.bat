@@ -59,7 +59,7 @@ echo.
 echo Experiments completed!
 echo.
 echo Generating plots...
-py ..\plot_results.py
+py plot_results.py
 
 if %errorlevel% neq 0 (
     echo.
