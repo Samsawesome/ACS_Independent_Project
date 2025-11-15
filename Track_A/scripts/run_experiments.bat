@@ -15,6 +15,9 @@ if %errorlevel% neq 0 (
 if not exist build mkdir build
 cd build
 
+:: Create raw_data directory
+if not exist raw_data mkdir raw_data
+
 echo Building project with Clang...
 
 :: Compile all source files with Clang

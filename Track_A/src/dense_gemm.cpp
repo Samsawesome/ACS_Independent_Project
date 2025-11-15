@@ -28,42 +28,27 @@ void DenseGEMM::gemm_scalar(const DenseMatrix& A, const DenseMatrix& B,
 
 void DenseGEMM::gemm_avx2(const DenseMatrix& A, const DenseMatrix& B, DenseMatrix& C) {
     const size_t M = C.rows, N = C.cols, K = A.cols;
-    const size_t block_size = 64;
     
     #pragma omp parallel for
     for (size_t i = 0; i < M; ++i) {
         for (size_t j = 0; j < N; j += 8) {
-            __m256 accum[4] = {
-                _mm256_setzero_ps(), _mm256_setzero_ps(),
-                _mm256_setzero_ps(), _mm256_setzero_ps()
-            };
+            __m256 accum = _mm256_setzero_ps();
             
             for (size_t k = 0; k < K; ++k) {
                 __m256 a_vec = _mm256_set1_ps(A(i, k));
-                
-                // Load 4 sets of 8 elements from B
-                for (int b = 0; b < 4; ++b) {
-                    size_t j_idx = j + b * 8;
-                    if (j_idx < N && j_idx + 8 <= N) {
-                        __m256 b_vec = _mm256_loadu_ps(&B(k, j_idx));
-                        accum[b] = _mm256_fmadd_ps(a_vec, b_vec, accum[b]);
-                    }
-                }
+                __m256 b_vec = _mm256_loadu_ps(&B(k, j));
+                accum = _mm256_fmadd_ps(a_vec, b_vec, accum);
             }
             
-            // Store results
-            for (int b = 0; b < 4; ++b) {
-                size_t j_idx = j + b * 8;
-                if (j_idx < N && j_idx + 8 <= N) {
-                    _mm256_storeu_ps(&C(i, j_idx), accum[b]);
-                } else if (j_idx < N) {
-                    // Handle partial store
-                    alignas(32) float result[8];
-                    _mm256_store_ps(result, accum[b]);
-                    size_t remaining = N - j_idx;
-                    for (size_t jj = 0; jj < remaining; ++jj) {
-                        C(i, j_idx + jj) = result[jj];
-                    }
+            // Handle remainder
+            size_t remaining = N - j;
+            if (remaining >= 8) {
+                _mm256_storeu_ps(&C(i, j), accum);
+            } else {
+                float temp[8];
+                _mm256_storeu_ps(temp, accum);
+                for (size_t jj = 0; jj < remaining; ++jj) {
+                    C(i, j + jj) = temp[jj];
                 }
             }
         }

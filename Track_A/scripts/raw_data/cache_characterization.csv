@@ -1,0 +1,5 @@
+cache_level,size_bytes,size_human,memory_bandwidth_gb_s
+L1,32768,32KB,11.532
+L2,262144,256KB,11.532
+L3,12582912,12MB,11.532
+DRAM,0,>L3,11.532

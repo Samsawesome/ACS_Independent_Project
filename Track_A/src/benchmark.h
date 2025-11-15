@@ -70,4 +70,19 @@ private:
                                 const std::vector<ExperimentResult>& results);
     
     static RooflineModel characterize_hardware();
+    
+    // Memory bandwidth measurement
+    static double measure_memory_bandwidth();
+    static void run_streaming_benchmark(size_t size_bytes, double& read_bw, double& write_bw);
+    
+    // Cache characterization
+    static void characterize_cache_hierarchy();
+    static size_t detect_cache_size(size_t max_size_mb = 32);
+    static double measure_cache_bandwidth(size_t working_set_size);
+    
+    // Cache size detection results
+    static size_t l1_cache_size;
+    static size_t l2_cache_size; 
+    static size_t l3_cache_size;
+    static double measured_memory_bw;
 };
