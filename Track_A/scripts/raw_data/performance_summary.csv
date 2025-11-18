@@ -1,6 +1,6 @@
 Experiment,Data Points,Max GFLOP/s,Avg GFLOP/s,Best Implementation,Pass Rate,Max Error
-Raw Data/Speedup Analysis,8,42.0659,13.8451,SIMD (42.1 GFLOP/s),,
-Raw Data/Density Break Even,16,32.4348,25.2059,SIMD (32.4 GFLOP/s),,
-Raw Data/Working Set Transitions,6,69.6873,34.45486533333334,SIMD (69.7 GFLOP/s),,
-Raw Data/Roofline Analysis,20,64.4039,31.58296345,SIMD (64.4 GFLOP/s),,
+Raw Data/Speedup Analysis,8,40.3455,14.263357500000001,SIMD (40.3 GFLOP/s),,
+Raw Data/Density Break Even,16,34.2268,26.4015,SIMD (34.2 GFLOP/s),,
+Raw Data/Working Set Transitions,6,65.4758,32.315945166666666,SIMD (65.5 GFLOP/s),,
+Raw Data/Roofline Analysis,20,68.0433,33.50744415,SIMD (68.0 GFLOP/s),,
 Correctness Validation,18,,,N/A,100.0%,1.0015794e-07

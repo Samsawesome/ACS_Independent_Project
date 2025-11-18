@@ -347,10 +347,10 @@ class MatrixBenchmarkVisualizer:
                     ax2.set_ylabel('GFLOP/s')
                     ax2.set_title('CSR SpMM: Single-Threaded Performance')
                     
-                    # Add CPLZ as text above bars
+                    # Add CPNZ as text above bars
                     for i, (bar, cpnz) in enumerate(zip(bars, cpnz_values)):
                         ax2.text(bar.get_x() + bar.get_width()/2., bar.get_height(),
-                                f'{cpnz:.1f} CPLZ', ha='center', va='bottom', fontsize=9)
+                                f'{cpnz:.1f} CPNZ', ha='center', va='bottom', fontsize=9)
         
         # Plot 2c: Thread scaling (Dense) - FIXED: Aggregate by thread count to avoid overlapping lines
         if dense_data is not None:
@@ -440,9 +440,14 @@ class MatrixBenchmarkVisualizer:
                     
                     if sparse_val > dense_val and break_even_point is None:
                         break_even_point = (sparsity, (dense_val + sparse_val) / 2)
-                        ax.axvline(x=sparsity, color='red', linestyle='--', 
+                        
+                        
+                    if sparse_val < dense_val and break_even_point is not None:
+                        break_even_point = None
+            
+            ax.axvline(x=break_even_point[0], color='red', linestyle='--', 
                                   linewidth=2, alpha=0.8, 
-                                  label=f'Break-even: {sparsity*100:.1f}%')
+                                  label=f'Break-even: {break_even_point[0]*100:.1f}%')
             
             ax.set_xlabel('Sparsity Percentage (log scale)')
             ax.set_ylabel('GFLOP/s')
@@ -607,7 +612,7 @@ class MatrixBenchmarkVisualizer:
         ax.axvline(x=peak_gflops/memory_bandwidth, color='red', linestyle='--', 
                 alpha=0.7, linewidth=2, label='Compute/Memory Boundary')
         
-        ax.text(0.05, 0.95, 'Compute-Bound', transform=ax.transAxes, fontsize=12,
+        ax.text(0.05, 0.5, 'Compute-Bound', transform=ax.transAxes, fontsize=12,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgreen', alpha=0.7))
         ax.text(0.65, 0.15, 'Memory-Bound', transform=ax.transAxes, fontsize=12,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor='lightcoral', alpha=0.7))
@@ -624,7 +629,7 @@ class MatrixBenchmarkVisualizer:
 
     def _plot_roofline_sparse(self, data, ai, roofline, peak_gflops, memory_bandwidth):
         """Plot roofline analysis for CSR SpMM only"""
-        fig, ax = plt.subplots(figsize=(10, 7))
+        fig, ax = plt.subplots(figsize=(12, 8))
         
         ax.loglog(ai, roofline, 'k-', linewidth=3, label='Theoretical Roofline')
         ax.fill_between(ai, 0, roofline, alpha=0.1, color='gray')
@@ -633,31 +638,82 @@ class MatrixBenchmarkVisualizer:
         if not data.empty:
             sparse_data = data[data['kernel_type'] == 'csr']
             if not sparse_data.empty:
-                sparse_scatter = ax.scatter(sparse_data['arithmetic_intensity'], 
-                                    sparse_data['gflops'],
-                                    s=150, alpha=0.8, c=sparse_data['sparsity']*100,
-                                    cmap='plasma', marker='s', label='CSR SpMM',
-                                    edgecolors='black', linewidth=0.5)
+                # Define markers for different matrix sizes
+                matrix_sizes = sorted(sparse_data['size'].unique())
+                markers = ['o', '^', 's', 'p', 'h']
+                marker_dict = {size: markers[i % len(markers)] for i, size in enumerate(matrix_sizes)}
                 
-                # Add colorbar for sparsity
-                cbar = plt.colorbar(sparse_scatter, ax=ax, shrink=0.8)
-                cbar.set_label('Sparsity (%)', fontsize=12)
-                cbar.ax.tick_params(labelsize=10)
+                # Define color map for sparsity levels
+                sparsity_levels = sorted(sparse_data['sparsity'].unique())
+                colors = plt.cm.plasma(np.linspace(0, 1, len(sparsity_levels)))
+                color_dict = {sparsity: colors[i] for i, sparsity in enumerate(sparsity_levels)}
+                
+                # Plot each combination of matrix size and sparsity
+                legend_handles = []
+                legend_labels = []
+                
+                for matrix_size in matrix_sizes:
+                    for sparsity in sparsity_levels:
+                        subset = sparse_data[
+                            (sparse_data['size'] == matrix_size) & 
+                            (sparse_data['sparsity'] == sparsity)
+                        ]
+                        
+                        if not subset.empty:
+                            scatter = ax.scatter(
+                                subset['arithmetic_intensity'], 
+                                subset['gflops'],
+                                s=150, 
+                                alpha=0.8,
+                                c=[color_dict[sparsity]],
+                                marker=marker_dict[matrix_size],
+                                edgecolors='black', 
+                                linewidth=0.5
+                            )
+                            
+                            # Add to legend (only once per matrix size and sparsity)
+                            if matrix_size == matrix_sizes[0]:  # Only add sparsity to legend once
+                                legend_handles.append(plt.Line2D([0], [0], marker='o', color='w', 
+                                                            markerfacecolor=color_dict[sparsity], 
+                                                            markersize=10, markeredgecolor='black'))
+                                legend_labels.append(f'Sparsity: {sparsity*100:.0f}%')
+                
+                # Add matrix size markers to legend
+                for matrix_size in matrix_sizes:
+                    legend_handles.append(plt.Line2D([0], [0], marker=marker_dict[matrix_size], color='w', 
+                                                markerfacecolor='gray', markersize=10, markeredgecolor='black'))
+                    legend_labels.append(f'Matrix: {matrix_size}x{matrix_size}')
+                
+                # Create custom legend for matrix sizes and sparsity
+                legend1 = ax.legend(legend_handles, legend_labels, loc='upper left', 
+                                fontsize=10, framealpha=0.9)
+                ax.add_artist(legend1)
         
         # Add compute/memory bound regions
-        ax.axvline(x=peak_gflops/memory_bandwidth, color='red', linestyle='--', 
+        boundary_ai = peak_gflops / memory_bandwidth
+        ax.axvline(x=boundary_ai, color='red', linestyle='--', 
                 alpha=0.7, linewidth=2, label='Compute/Memory Boundary')
         
-        ax.text(0.05, 0.95, 'Compute-Bound', transform=ax.transAxes, fontsize=12,
+        # Add region labels
+        ax.text(0.05, 0.5, 'Compute-Bound', transform=ax.transAxes, fontsize=12,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgreen', alpha=0.7))
         ax.text(0.65, 0.15, 'Memory-Bound', transform=ax.transAxes, fontsize=12,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor='lightcoral', alpha=0.7))
         
+        # Add some annotation about the data separation
+        ax.text(0.02, 0.02, 'Markers: Matrix Size\nColors: Sparsity %', 
+                transform=ax.transAxes, fontsize=10,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
+        
         ax.set_xlabel('Arithmetic Intensity (FLOP/byte)', fontsize=12)
         ax.set_ylabel('Performance (GFLOP/s)', fontsize=12)
-        ax.set_title('Experiment 5: Roofline Model Analysis - CSR SpMM', fontsize=14)
-        ax.legend(fontsize=11)
+        ax.set_title('Experiment 5: Roofline Model Analysis - CSR SpMM\n(Colored by Sparsity, Markers by Matrix Size)', 
+                    fontsize=14)
         ax.grid(True, which="both", ls="-", alpha=0.2)
+        
+        # Add boundary line to legend
+        boundary_line = plt.Line2D([0], [0], color='red', linestyle='--', linewidth=2)
+        ax.legend([boundary_line], ['Compute/Memory Boundary'], loc='lower right', fontsize=10)
         
         plt.tight_layout()
         plt.savefig('roofline_analysis_sparse.png', dpi=300, bbox_inches='tight')

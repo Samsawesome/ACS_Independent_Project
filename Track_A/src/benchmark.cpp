@@ -6,7 +6,6 @@
 #include <numeric>
 #include <iostream>
 
-// Add these static variables at the top of benchmark.cpp
 size_t BenchmarkSuite::l1_cache_size = 0;
 size_t BenchmarkSuite::l2_cache_size = 0;
 size_t BenchmarkSuite::l3_cache_size = 0;
@@ -107,7 +106,6 @@ ExperimentResult BenchmarkSuite::run_sparse_experiment(const ExperimentConfig& c
     result.sparsity = config.sparsity;
     result.threads = config.num_threads;
     
-    
     auto A_dense = generate_random_dense(config.m, config.k, config.sparsity);
     auto A_csr = dense_to_csr(*A_dense);
     auto B = generate_random_dense(config.k, config.n, 0.0f);
@@ -115,10 +113,9 @@ ExperimentResult BenchmarkSuite::run_sparse_experiment(const ExperimentConfig& c
     
     WindowsUtils::PerformanceCounter timer;
     double total_time = 0.0;
+    double total_cycles = 0.0;
     const int iterations = 3;
     const int warmup = 3;
-    
-    
     
     for (int i = 0; i < warmup + iterations; i++) {
         // Reset C matrix
@@ -140,11 +137,13 @@ ExperimentResult BenchmarkSuite::run_sparse_experiment(const ExperimentConfig& c
             std::cout << "ERROR in sparse experiment: " << e.what() << std::endl;
             result.time_seconds = 0.0;
             result.gflops = 0.0;
+            result.cpnz = 0.0; 
             return result;
         }
         timer.stop();
         if (i >= warmup) {
             total_time += timer.get_elapsed_seconds();
+            total_cycles += timer.get_cycle_count();
         }
     }
     
@@ -153,7 +152,10 @@ ExperimentResult BenchmarkSuite::run_sparse_experiment(const ExperimentConfig& c
     size_t nnz = A_csr->values.size();
     result.flops = 2 * nnz * config.n;
     result.gflops = (result.flops / 1e9) / result.time_seconds;
-    result.cpnz = timer.get_cycle_count() / static_cast<double>(nnz);
+
+    double cpu_frequency_ghz = 3.0; //rough GHZ of my i5-12600K
+    double cpu_frequency_hz = cpu_frequency_ghz * 1e9;
+    result.cpnz = (result.time_seconds * cpu_frequency_hz) / static_cast<double>(nnz);
     
     // Estimate bytes accessed for sparse
     result.bytes_accessed = (nnz * (sizeof(float) + sizeof(int)) + 
@@ -349,13 +351,10 @@ size_t BenchmarkSuite::detect_cache_size(size_t max_size_mb) {
                   << access_time * 1e9 << " ns" << std::endl;
     }
     
-    // Simple heuristic: look for significant jumps in access time
     size_t l1_size = 32 * 1024;   // Typical L1
     size_t l2_size = 256 * 1024;  // Typical L2  
     size_t l3_size = 12 * 1024 * 1024; // Typical L3 for i5-12600K
     
-    // You could add automatic detection logic here
-    // For now, using typical values for i5-12600K
     std::cout << "Using typical cache sizes for i5-12600K:" << std::endl;
     std::cout << "  L1: " << l1_size/1024 << "KB" << std::endl;
     std::cout << "  L2: " << l2_size/1024 << "KB" << std::endl; 

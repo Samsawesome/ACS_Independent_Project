@@ -70,18 +70,6 @@ std::string WindowsUtils::get_compiler_info() {
     return ss.str();
 }
 
-double WindowsUtils::get_memory_bandwidth() {
-    return 50.0; // Conservative estimate in GB/s
-}
-
-size_t WindowsUtils::get_cache_size(int level) {
-    switch(level) {
-        case 1: return 32 * 1024;
-        case 2: return 256 * 1024;
-        case 3: return 12 * 1024 * 1024;
-        default: return 0;
-    }
-}
 
 // Windows Performance Counter implementation
 WindowsUtils::PerformanceCounter::PerformanceCounter() {

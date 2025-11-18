@@ -45,8 +45,8 @@ struct RooflineModel {
 class BenchmarkSuite {
 public:
     struct BenchmarkConfig {
-        std::vector<size_t> sizes;  // Matrix sizes to test
-        std::vector<float> sparsities; // Sparsity levels
+        std::vector<size_t> sizes;
+        std::vector<float> sparsities;
         std::vector<int> thread_counts;
         int repetitions;
         bool validate;

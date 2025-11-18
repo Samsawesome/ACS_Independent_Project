@@ -2,7 +2,7 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
-#include <immintrin.h>  // AVX2, AVX-512
+#include <immintrin.h>  // AVX2
 
 #ifdef _OPENMP
 #include <omp.h>

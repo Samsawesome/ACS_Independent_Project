@@ -5,14 +5,13 @@
 
 int main(int argc, char* argv[]) {
     std::cout << "Dense vs Sparse Matrix Multiplication Benchmark Suite\n";
-    //std::cout << "CPU: " << get_cpu_info() << std::endl;
     
     // Setup environment
     setup_environment();
     
     BenchmarkSuite::BenchmarkConfig config;
     
-    // Matrix sizes: square and rectangular cases
+    // Matrix sizes: square cases
     config.sizes = {64, 128, 256, 512, 1024};
     
     // Sparsity sweep

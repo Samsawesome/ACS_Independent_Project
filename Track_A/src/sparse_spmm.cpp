@@ -10,7 +10,6 @@ void SparseSpMM::csr_spmm_scalar(const CSRMatrix& A, const DenseMatrix& B,
     const size_t M = A.rows;
     const size_t N = B.cols;
     
-    // Initialize C to zero
     #pragma omp parallel for
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
@@ -37,8 +36,7 @@ void SparseSpMM::csr_spmm_avx2(const CSRMatrix& A, const DenseMatrix& B,
     const size_t M = A.rows;
     const size_t N = B.cols;
     const size_t simd_width = 8;
-    
-    // Initialize C to zero
+
     #pragma omp parallel for
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
@@ -94,7 +92,6 @@ void SparseSpMM::csr_spmm_omp(const CSRMatrix& A, const DenseMatrix& B,
     const size_t M = A.rows;
     const size_t N = B.cols;
     
-    // Initialize C to zero
     #pragma omp parallel for num_threads(num_threads)
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
@@ -126,7 +123,6 @@ void SparseSpMM::csr_spmm_avx2_omp(const CSRMatrix& A, const DenseMatrix& B,
     const size_t N = B.cols;
     const size_t simd_width = 8;
     
-    // Initialize C to zero
     #pragma omp parallel for num_threads(num_threads)
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
@@ -185,8 +181,7 @@ void SparseSpMM::csc_spmm_scalar(const CSCMatrix& A, const DenseMatrix& B,
                                 DenseMatrix& C) {
     const size_t M = A.rows;
     const size_t N = B.cols;
-    
-    // Initialize C to zero
+
     #pragma omp parallel for
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
@@ -212,8 +207,7 @@ void SparseSpMM::csc_spmm_avx2(const CSCMatrix& A, const DenseMatrix& B,
     // Similar to CSR but with column-wise access pattern
     const size_t M = A.rows;
     const size_t N = B.cols;
-    
-    // Initialize C to zero
+
     #pragma omp parallel for
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
@@ -252,8 +246,7 @@ void SparseSpMM::csc_spmm_omp(const CSCMatrix& A, const DenseMatrix& B,
                              DenseMatrix& C, int num_threads) {
     const size_t M = A.rows;
     const size_t N = B.cols;
-    
-    // Initialize C to zero
+
     #pragma omp parallel for num_threads(num_threads)
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
@@ -284,8 +277,7 @@ void SparseSpMM::csr_spmm_tiled(const CSRMatrix& A, const DenseMatrix& B,
                                DenseMatrix& C, size_t tile_cols, int num_threads) {
     const size_t M = A.rows;
     const size_t N = B.cols;
-    
-    // Initialize C to zero
+
     #pragma omp parallel for num_threads(num_threads)
     for (size_t i = 0; i < M * N; ++i) {
         C.data[i] = 0.0f;
