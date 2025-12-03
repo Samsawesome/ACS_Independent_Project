@@ -16,3 +16,5 @@ There are a couple more processes at the end but for this project I really only 
 
 Takeaway: It seems to be  feasable to create an IOPS core that takes a large part of the storage stack off of the CPU.
 
+However, due to there being I/O commands that are not issued by an SSD (for example, any computer peripherals' I/O commands), the per-core software queue would have to stay on the CPU, so that the peripherals' I/O commands could be identified and not sent to the IOPS chip. The IOPS chip I envision is specifically for SSD I/Os, and has the NVMe drivers built in for that purpose.
+

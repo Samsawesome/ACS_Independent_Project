@@ -16,4 +16,6 @@ Takeaway: I did not know block requests were batched together, and it might be s
 
 Very nice diagrams that showcase the specifics of the default read path versus their proposed read path, along with other diagrams that show the overview of the block layer and other proposed command paths.
 
-Need to finish reading
+There are lots of optimizations this paper is able to make in the kernel space for reads and writes. This tells me that the initial kernel code for reads and writes was not coded with efficiency in mind, and thus there are many areas in the code that can be optimized. However, there are also critical steps that can not be shortened or removed, so there are certain areas that can not be optimized.
+
+Takeaway: There is much room for optimization of the kernel I/O stack.

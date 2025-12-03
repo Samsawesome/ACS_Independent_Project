@@ -1,6 +1,5 @@
 // Testbench
-// IO Chip Module - COMPLETELY REWRITTEN STATE MACHINE
-// IO Chip Module - COMPLETELY REWRITTEN STATE MACHINE
+// IO Chip Module
 module io_chip (
     input        clk,
     input        rst_n,
@@ -23,7 +22,7 @@ module io_chip (
     input         ssd_data_ready
 );
 
-    // Internal states - SIMPLIFIED
+    // Internal states
     parameter [2:0] IDLE = 0,
                     DECODE = 1,
                     SEND_TO_SSD = 2,
@@ -249,9 +248,7 @@ module io_chip (
 
 endmodule
 
-// Testbench - SIMPLIFIED AND WORKING
-// Testbench - WITH ERROR DETECTION
-// Testbench - FIXED CYCLE COUNTING AND THROUGHPUT
+// Testbench
 module tb_io_chip;
 
     reg        clk;
@@ -294,7 +291,7 @@ module tb_io_chip;
     // Clock generation
     always #5 clk = ~clk;
     
-    // Cycle counter - FIXED: Use integer and proper initialization
+    // Cycle counter
     initial begin
         total_clock_cycles = 0;
         forever begin
@@ -440,7 +437,7 @@ module tb_io_chip;
         end
     endtask
     
-    // Task to simulate SSD - FIXED: Proper timing and length handling
+    // Task to simulate SSD
     task simulate_ssd;
         begin
             forever begin
@@ -468,7 +465,7 @@ module tb_io_chip;
         end
     endtask
     
-    // Monitor simulation progress - FIXED: Proper completion detection
+    // Monitor simulation progress
     task monitor_simulation;
         begin
             // Wait for all commands to be sent
@@ -511,7 +508,7 @@ module tb_io_chip;
     // Emergency timeout
     task emergency_timeout;
         begin
-            #50000; // 50,000 time units timeout
+            #50000;
             if (!simulation_done) begin
                 $display("Time %0t: EMERGENCY TIMEOUT - Simulation stuck!", $time);
                 $display("Commands sent: %0d, DUT completed: %0d", commands_sent, dut.commands_processed);
