@@ -39,7 +39,7 @@ void PerformIOOperations() {
     );
     
     if (hFile == INVALID_HANDLE_VALUE) {
-        printf("Error creating test file: %d\n", GetLastError());
+        printf("Error creating test file: %lu\n", GetLastError());
         return;
     }
     
@@ -57,13 +57,13 @@ void PerformIOOperations() {
         
         result = SetFilePointerEx(hFile, offset, NULL, FILE_BEGIN);
         if (!result) {
-            printf("SetFilePointerEx failed: %d\n", GetLastError());
+            printf("SetFilePointerEx failed: %lu\n", GetLastError());
             break;
         }
         
         result = WriteFile(hFile, writeBuffer, sizeof(writeBuffer), &bytesWritten, NULL);
         if (!result || bytesWritten != sizeof(writeBuffer)) {
-            printf("WriteFile failed: %d\n", GetLastError());
+            printf("WriteFile failed: %lu\n", GetLastError());
             break;
         }
         
@@ -74,7 +74,7 @@ void PerformIOOperations() {
         
         double writeTime = (double)(endTime.QuadPart - startTime.QuadPart) / frequency.QuadPart * 1000.0;
         
-        printf("Write %d: %d bytes in %.2f ms\n", i, bytesWritten, writeTime);
+        printf("Write %lu: %lu bytes in %.2f ms\n", i, bytesWritten, writeTime);
         
         offset.QuadPart += sizeof(writeBuffer);
     }
@@ -88,13 +88,13 @@ void PerformIOOperations() {
         
         result = SetFilePointerEx(hFile, offset, NULL, FILE_BEGIN);
         if (!result) {
-            printf("SetFilePointerEx failed: %d\n", GetLastError());
+            printf("SetFilePointerEx failed: %lu\n", GetLastError());
             break;
         }
         
         result = ReadFile(hFile, buffer, sizeof(buffer), &bytesRead, NULL);
         if (!result || bytesRead != sizeof(buffer)) {
-            printf("ReadFile failed: %d\n", GetLastError());
+            printf("ReadFile failed: %lu\n", GetLastError());
             break;
         }
         
@@ -102,7 +102,7 @@ void PerformIOOperations() {
         
         double readTime = (double)(endTime.QuadPart - startTime.QuadPart) / frequency.QuadPart * 1000.0;
         
-        printf("Read %d: %d bytes in %.2f ms\n", i, bytesRead, readTime);
+        printf("Read %lu: %lu bytes in %.2f ms\n", i, bytesRead, readTime);
         
         offset.QuadPart += sizeof(buffer);
     }

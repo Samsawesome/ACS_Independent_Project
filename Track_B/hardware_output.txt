@@ -1,0 +1,55 @@
+========================================================================
+WINDOWS STORAGE STACK - HARDWARE SIMULATION RESULTS
+========================================================================
+Timestamp: 15975000 ns
+
+1. COMMAND STATISTICS
+   Total Commands Processed: 70
+   Commands from Input File: 70
+   Read Commands:  40
+   Write Commands: 30
+   Total Bytes:    471040
+
+2. PIPELINE STATISTICS
+   IRPs Created:              70
+   SRBs Created:              70
+   NVMe Commands Issued:      70
+   NVMe Completions Received: 70
+   Max Queue Depth:           0
+
+3. LATENCY STATISTICS (CYCLES)
+   Commands with Latency Data: 68
+   Minimum Latency:            649 cycles
+   Maximum Latency:            850 cycles
+   Average Latency:            752 cycles
+   95th Percentile (p95):      844 cycles
+   99th Percentile (p99):      850 cycles
+
+4. LATENCY STATISTICS (MICROSECONDS @100MHz)
+   Average Latency:            7.52 us
+   95th Percentile (p95):      8.44 us
+   99th Percentile (p99):      8.50 us
+
+5. PERFORMANCE METRICS
+   Total Clock Cycles:         1586
+   Average Cycles per Command: 22.66
+   Average Bytes per Command:  6729.14
+   Bytes per Cycle:            296.9987
+
+6. THROUGHPUT ESTIMATES (100MHz Clock)
+   Estimated IOPS:             4413619
+   Average Throughput:         29.70 GB/s
+   System Efficiency:          58.01%
+
+7. COMPLETION STATUS
+   SUCCESS: All 70 commands completed
+
+8. DEBUG STATE INFORMATION
+   Block Layer State:          0
+   NVMe Driver State:          0
+   Block IRP FIFO Count:       0
+   Block SRB FIFO Count:       0
+   NVMe SRB FIFO Count:        0
+   NVMe CPL FIFO Count:        0
+   NVMe Queue Counts Sum:      0
+========================================================================

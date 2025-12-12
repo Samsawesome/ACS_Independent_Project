@@ -1207,10 +1207,12 @@ module nvme_driver_core #(
 endmodule
 
 // ============================================================================
-// Module: Performance Statistics Collector
+// Module: Enhanced Performance Statistics Collector with Latency Percentiles
 // ============================================================================
 module performance_statistics #(
-    parameter CYCLE_COUNTER_WIDTH = 64
+    parameter CYCLE_COUNTER_WIDTH = 64,
+    parameter MAX_COMMANDS = 1000,
+    parameter LATENCY_HISTORY_DEPTH = 1024
 )(
     input wire clk,
     input wire reset_n,
@@ -1229,6 +1231,11 @@ module performance_statistics #(
     // Queue monitoring
     input wire [31:0] current_queue_depth,
     
+    // Latency tracking (for p95/p99)
+    input wire [15:0] command_id_received,      // Command ID when received
+    input wire [15:0] command_id_completed,     // Command ID when completed
+    input wire latency_track_enable,            // Enable latency tracking for this command
+    
     // Statistics outputs
     output reg [63:0] total_cycles,
     output reg [63:0] total_commands,
@@ -1239,7 +1246,16 @@ module performance_statistics #(
     output reg [31:0] irps_created_count,
     output reg [31:0] srbs_created_count,
     output reg [31:0] nvme_cmds_issued_count,
-    output reg [31:0] nvme_cpls_received_count
+    output reg [31:0] nvme_cpls_received_count,
+    
+    // Latency statistics
+    output reg [31:0] min_latency_cycles,
+    output reg [31:0] max_latency_cycles,
+    output reg [63:0] total_latency_cycles,
+    output reg [31:0] average_latency_cycles,
+    output reg [31:0] p95_latency_cycles,
+    output reg [31:0] p99_latency_cycles,
+    output reg [31:0] commands_with_latency
 );
     
     // Cycle counter
@@ -1247,6 +1263,23 @@ module performance_statistics #(
     
     // Queue depth tracking
     reg [31:0] current_depth;
+    
+    // Latency tracking structures
+    reg [63:0] command_start_time [0:MAX_COMMANDS-1];
+    reg [63:0] command_end_time [0:MAX_COMMANDS-1];
+    reg [31:0] command_latencies [0:LATENCY_HISTORY_DEPTH-1];
+    reg [9:0] latency_write_ptr;
+    reg [9:0] latency_read_ptr;
+    reg latency_tracking_active;
+    
+    // Temporary storage for latency calculation
+    reg [31:0] sorted_latencies [0:MAX_COMMANDS-1];
+    reg [31:0] temp_latency;
+    reg [9:0] i, j;
+    
+    // Internal registers for percentile calculation
+    reg [31:0] p95_index, p99_index;
+    reg [31:0] latency_count;
     
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
@@ -1262,6 +1295,34 @@ module performance_statistics #(
             nvme_cpls_received_count <= 0;
             cycle_counter <= 0;
             current_depth <= 0;
+            
+            // Initialize latency tracking
+            min_latency_cycles <= 32'hFFFFFFFF;
+            max_latency_cycles <= 0;
+            total_latency_cycles <= 0;
+            average_latency_cycles <= 0;
+            p95_latency_cycles <= 0;
+            p99_latency_cycles <= 0;
+            commands_with_latency <= 0;
+            latency_write_ptr <= 0;
+            latency_read_ptr <= 0;
+            latency_tracking_active <= 0;
+            latency_count <= 0;
+            
+            // Initialize arrays
+            for (int i = 0; i < MAX_COMMANDS; i = i + 1) begin
+                command_start_time[i] <= 0;
+                command_end_time[i] <= 0;
+            end
+            
+            for (int i = 0; i < LATENCY_HISTORY_DEPTH; i = i + 1) begin
+                command_latencies[i] <= 0;
+            end
+            
+            for (int i = 0; i < MAX_COMMANDS; i = i + 1) begin
+                sorted_latencies[i] <= 0;
+            end
+            
         end else begin
             // Count cycles
             cycle_counter <= cycle_counter + 1;
@@ -1276,26 +1337,129 @@ module performance_statistics #(
                 end else begin
                     read_commands <= read_commands + 1;
                 end
+                
+                // Record start time for latency tracking
+                if (latency_track_enable && command_id_received < MAX_COMMANDS) begin
+                    command_start_time[command_id_received] <= cycle_counter;
+                    $display("STATS: Recorded start time for command %0d at cycle %0d", 
+                            command_id_received, cycle_counter);
+                end
             end
             
             // Track pipeline stages
             if (irp_created) irps_created_count <= irps_created_count + 1;
             if (srb_created) srbs_created_count <= srbs_created_count + 1;
             if (nvme_cmd_issued) nvme_cmds_issued_count <= nvme_cmds_issued_count + 1;
-            if (nvme_cpl_received) nvme_cpls_received_count <= nvme_cpls_received_count + 1;
+            
+            // Track completions and calculate latency
+            if (nvme_cpl_received && latency_track_enable && command_id_completed < MAX_COMMANDS) begin
+                nvme_cpls_received_count <= nvme_cpls_received_count + 1;
+                
+                // Calculate latency if we have a start time
+                if (command_start_time[command_id_completed] > 0) begin
+                    automatic reg [63:0] start_time = command_start_time[command_id_completed];
+                    automatic reg [63:0] end_time = cycle_counter;
+                    automatic reg [31:0] latency;
+                    
+                    // Calculate latency in cycles
+                    if (end_time >= start_time) begin
+                        latency = end_time - start_time;
+                    end else begin
+                        // Handle counter wrap-around
+                        latency = (64'hFFFFFFFFFFFFFFFF - start_time) + end_time + 1;
+                    end
+                    
+                    // Store latency in history
+                    if (latency_write_ptr < LATENCY_HISTORY_DEPTH) begin
+                        command_latencies[latency_write_ptr] <= latency;
+                        latency_write_ptr <= latency_write_ptr + 1;
+                        latency_count <= latency_count + 1;
+                        
+                        // Update min/max
+                        if (latency < min_latency_cycles) min_latency_cycles <= latency;
+                        if (latency > max_latency_cycles) max_latency_cycles <= latency;
+                        
+                        // Update total for average
+                        total_latency_cycles <= total_latency_cycles + latency;
+                        
+                        // Update average
+                        if (latency_count > 0) begin
+                            average_latency_cycles <= total_latency_cycles / latency_count;
+                        end
+                        
+                        commands_with_latency <= latency_count;
+                        
+                        $display("STATS: Command %0d latency = %0d cycles (min=%0d, max=%0d, avg=%0d)", 
+                                command_id_completed, latency, min_latency_cycles, 
+                                max_latency_cycles, average_latency_cycles);
+                    end
+                    
+                    // Clear the start time
+                    command_start_time[command_id_completed] <= 0;
+                end
+            end
             
             // Track queue depth
             current_depth <= current_queue_depth;
             if (current_depth > max_queue_depth) begin
                 max_queue_depth <= current_depth;
             end
+            
+            // Calculate percentiles periodically (every 64 completions or when requested)
+            if (latency_count >= 10 && (latency_count % 64 == 0 || nvme_cpl_received)) begin
+                calculate_percentiles();
+            end
         end
     end
+    
+    // Task to calculate p95 and p99 percentiles
+    task calculate_percentiles;
+        automatic integer sorted_count = 0;
+        automatic integer p95_pos, p99_pos;
+        begin
+            // Copy valid latencies to temporary array
+            sorted_count = 0;
+            for (i = 0; i < latency_write_ptr; i = i + 1) begin
+                if (command_latencies[i] > 0) begin
+                    sorted_latencies[sorted_count] = command_latencies[i];
+                    sorted_count = sorted_count + 1;
+                end
+            end
+            
+            if (sorted_count > 0) begin
+                // Simple bubble sort (for moderate number of samples)
+                for (i = 0; i < sorted_count - 1; i = i + 1) begin
+                    for (j = 0; j < sorted_count - i - 1; j = j + 1) begin
+                        if (sorted_latencies[j] > sorted_latencies[j + 1]) begin
+                            temp_latency = sorted_latencies[j];
+                            sorted_latencies[j] = sorted_latencies[j + 1];
+                            sorted_latencies[j + 1] = temp_latency;
+                        end
+                    end
+                end
+                
+                // Calculate percentile indices
+                p95_pos = (sorted_count * 95 + 99) / 100; // Round up
+                p99_pos = (sorted_count * 99 + 99) / 100; // Round up
+                
+                // Ensure indices are within bounds
+                if (p95_pos >= sorted_count) p95_pos = sorted_count - 1;
+                if (p99_pos >= sorted_count) p99_pos = sorted_count - 1;
+                
+                // Set percentile values
+                p95_latency_cycles <= sorted_latencies[p95_pos];
+                p99_latency_cycles <= sorted_latencies[p99_pos];
+                
+                $display("STATS: Percentiles calculated - p95=%0d, p99=%0d (based on %0d samples)", 
+                        sorted_latencies[p95_pos], sorted_latencies[p99_pos], sorted_count);
+            end
+        end
+    endtask
     
 endmodule
 
 // ============================================================================
-// Updated Top Module with Debug Outputs
+// Updated Top Module with Debug Outputs and Latency Tracking
 // ============================================================================
 module windows_storage_stack_core_fixed #(
     parameter CMD_FIFO_DEPTH = 64,
@@ -1334,6 +1498,14 @@ module windows_storage_stack_core_fixed #(
     output wire [31:0] stat_srbs_created,
     output wire [31:0] stat_nvme_cmds_issued,
     output wire [31:0] stat_nvme_cpls_received,
+    
+    // Latency Statistics
+    output wire [31:0] stat_min_latency,
+    output wire [31:0] stat_max_latency,
+    output wire [31:0] stat_avg_latency,
+    output wire [31:0] stat_p95_latency,
+    output wire [31:0] stat_p99_latency,
+    output wire [31:0] stat_commands_with_latency,
     
     // DEBUG OUTPUTS - ADDED
     output wire [3:0] debug_blk_state,
@@ -1384,10 +1556,27 @@ module windows_storage_stack_core_fixed #(
     wire nvme_cmd_issued;
     wire nvme_cpl_received;
     
+    // Latency tracking signals
+    reg [15:0] command_id_counter;
+    wire [15:0] current_command_id;
+    wire latency_track_enable;
+    
     // Simplified command parser
     assign parsed_cmd_valid = cmd_in_valid;
     assign parsed_cmd_data = cmd_in_data;
     assign cmd_in_ready = parsed_cmd_ready;
+    
+    // Command ID assignment
+    always_ff @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            command_id_counter <= 0;
+        end else if (cmd_in_valid && cmd_in_ready) begin
+            command_id_counter <= command_id_counter + 1;
+        end
+    end
+    
+    assign current_command_id = command_id_counter;
+    assign latency_track_enable = 1'b1; // Always track latency for all commands
     
     // Statistics event tracking
     assign command_received = parsed_cmd_valid && parsed_cmd_ready;
@@ -1488,9 +1677,11 @@ module windows_storage_stack_core_fixed #(
     .debug_srb_valid_bit()
 );
     
-    // Performance statistics collector
+    // Enhanced Performance statistics collector with latency tracking
     performance_statistics #(
-        .CYCLE_COUNTER_WIDTH(64)
+        .CYCLE_COUNTER_WIDTH(64),
+        .MAX_COMMANDS(1000),
+        .LATENCY_HISTORY_DEPTH(1024)
     ) perf_stats (
         .clk(clk),
         .reset_n(reset_n),
@@ -1502,6 +1693,9 @@ module windows_storage_stack_core_fixed #(
         .nvme_cmd_issued(nvme_cmd_issued),
         .nvme_cpl_received(nvme_cpl_received),
         .current_queue_depth(nvme_queue_util),
+        .command_id_received(current_command_id),
+        .command_id_completed(completion_irp_id),
+        .latency_track_enable(latency_track_enable),
         .total_cycles(stat_total_cycles),
         .total_commands(stat_total_commands),
         .total_bytes(stat_total_bytes),
@@ -1511,7 +1705,14 @@ module windows_storage_stack_core_fixed #(
         .irps_created_count(stat_irps_created),
         .srbs_created_count(stat_srbs_created),
         .nvme_cmds_issued_count(stat_nvme_cmds_issued),
-        .nvme_cpls_received_count(stat_nvme_cpls_received)
+        .nvme_cpls_received_count(stat_nvme_cpls_received),
+        .min_latency_cycles(stat_min_latency),
+        .max_latency_cycles(stat_max_latency),
+        .total_latency_cycles(), // Internal only
+        .average_latency_cycles(stat_avg_latency),
+        .p95_latency_cycles(stat_p95_latency),
+        .p99_latency_cycles(stat_p99_latency),
+        .commands_with_latency(stat_commands_with_latency)
     );
     
     // Map completion output
@@ -1522,7 +1723,7 @@ module windows_storage_stack_core_fixed #(
 endmodule
 
 // ============================================================================
-// Testbench Debug Ports
+// Testbench Debug Ports with Enhanced Latency Statistics
 // ============================================================================
 module tb_windows_storage_stack_debug;
     
@@ -1560,6 +1761,14 @@ module tb_windows_storage_stack_debug;
     wire [31:0] stat_nvme_cmds_issued;
     wire [31:0] stat_nvme_cpls_received;
     
+    // Latency Statistics
+    wire [31:0] stat_min_latency;
+    wire [31:0] stat_max_latency;
+    wire [31:0] stat_avg_latency;
+    wire [31:0] stat_p95_latency;
+    wire [31:0] stat_p99_latency;
+    wire [31:0] stat_commands_with_latency;
+    
     // DEBUG OUTPUTS
     wire [3:0] debug_blk_state;
     wire [31:0] debug_blk_fifo_count;
@@ -1570,10 +1779,18 @@ module tb_windows_storage_stack_debug;
     wire [31:0] debug_nvme_cpl_fifo_count;
     wire [31:0] debug_nvme_queue_counts_sum;
     
-    // Test commands
-    reg [127:0] test_commands [0:6];
+    // Test commands - now dynamic
+    reg [127:0] test_commands [0:99];  // Increased to 100 commands maximum
+    integer num_commands;  // Number of commands actually read from file
     integer command_index;
     integer completions_received;
+    
+    // Latency tracking arrays
+    reg [63:0] command_start_time [0:99];
+    reg [63:0] command_end_time [0:99];
+    reg [31:0] command_latency [0:99];
+    reg [31:0] latencies_sorted [0:99];
+    integer latency_count;
     
     // Debug state tracking
     reg [3:0] prev_blk_state;
@@ -1611,6 +1828,13 @@ module tb_windows_storage_stack_debug;
         .stat_srbs_created(stat_srbs_created),
         .stat_nvme_cmds_issued(stat_nvme_cmds_issued),
         .stat_nvme_cpls_received(stat_nvme_cpls_received),
+        // Latency Statistics
+        .stat_min_latency(stat_min_latency),
+        .stat_max_latency(stat_max_latency),
+        .stat_avg_latency(stat_avg_latency),
+        .stat_p95_latency(stat_p95_latency),
+        .stat_p99_latency(stat_p99_latency),
+        .stat_commands_with_latency(stat_commands_with_latency),
         // DEBUG OUTPUTS
         .debug_blk_state(debug_blk_state),
         .debug_blk_fifo_count(debug_blk_fifo_count),
@@ -1629,29 +1853,93 @@ module tb_windows_storage_stack_debug;
         forever #5 clk = ~clk;
     end
     
-    // Initialize test commands
-    initial begin
+    // Read commands from file and determine actual count
+    task read_commands_from_file;
+        input [2000:0] filename;
+        integer file;
+        integer scan_count;
+        integer temp_data_pattern;
+        integer temp_size_bytes;
+        integer temp_lba;
+        integer temp_is_write;
+        integer command_count;
         
-        // FORMAT (128 bits total):
-        // Bits [127:96] = data_pattern[31:0]
-        // Bits [95:64]  = size_bytes[31:0]
-        // Bits [63:32]  = lba[31:0]
-        // Bits [31:1]   = reserved
-        // Bit  [0]      = is_write
-        test_commands[0] = {32'h00000000, 32'd4096, 32'd1024, 31'b0, 1'b0};  // Read: LBA=1024, Size=4096
-        test_commands[1] = {32'h12345678, 32'd8192, 32'd2048, 31'b0, 1'b1};  // Write: LBA=2048, Size=8192
-        test_commands[2] = {32'h00000000, 32'd2048, 32'd4096, 31'b0, 1'b0};  // Read: LBA=4096, Size=2048
-        test_commands[3] = {32'h6EDCBA98, 32'd4096, 32'd8192, 31'b0, 1'b1};  // Write: LBA=8192, Size=4096
-        test_commands[4] = {32'h00000000, 32'd8192, 32'd16384, 31'b0, 1'b0}; // Read: LBA=16384, Size=8192
-        test_commands[5] = {32'h11223344, 32'd4096, 32'd32768, 31'b0, 1'b1}; // Write: LBA=32768, Size=4096
-        test_commands[6] = {32'h00000000, 32'd16384, 32'd65536, 31'b0, 1'b0}; // Read: LBA=65536, Size=16384
-    end
+        begin
+            file = $fopen(filename, "r");
+            if (file == 0) begin
+                $display("Error: Could not open file %s", filename);
+                $finish;
+            end
+            
+            command_count = 0;
+            while (!$feof(file) && command_count < 100) begin
+                scan_count = $fscanf(file, "%h %d %d %d", 
+                                   temp_data_pattern, temp_size_bytes, temp_lba, temp_is_write);
+                if (scan_count == 4) begin
+                    test_commands[command_count] = {temp_data_pattern[31:0], temp_size_bytes[31:0], temp_lba[31:0], 31'b0, temp_is_write[0]};
+                    command_count = command_count + 1;
+                end
+            end
+            
+            $fclose(file);
+            num_commands = command_count;  // Store the actual number of commands
+            $display("Read %0d commands from file", num_commands);
+            
+            // Initialize the rest of the array to zeros
+            for (command_count = num_commands; command_count < 100; command_count = command_count + 1) begin
+                test_commands[command_count] = 128'b0;
+            end
+        end
+    endtask
+    
+    // Initialize test commands from file
     initial begin
-        for (int i = 0; i < 7; i++) begin
+        $display("Reading commands from input file...");
+        //read_commands_from_file("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/7_cpu_commands.txt");
+        read_commands_from_file("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/70_cpu_commands.txt");
+        // Display summary of commands read
+        if (num_commands > 0) begin
+            $display("Successfully read %0d commands from file", num_commands);
+            for (integer i = 0; i < num_commands; i = i + 1) begin
+                $display("Command %0d: %s LBA=%0d, Size=%0d bytes", 
+                         i, (test_commands[i][0] ? "WRITE" : "READ"),
+                         test_commands[i][63:32],
+                         test_commands[i][95:64]);
+            end
+        end else begin
+            $display("WARNING: No commands read from file! Using default test commands.");
+            // Fallback to default test commands
+            test_commands[0] = {32'h00000000, 32'd4096, 32'd1024, 31'b0, 1'b0};  // Read: LBA=1024, Size=4096
+            test_commands[1] = {32'h12345678, 32'd8192, 32'd2048, 31'b0, 1'b1};  // Write: LBA=2048, Size=8192
+            test_commands[2] = {32'h00000000, 32'd2048, 32'd4096, 31'b0, 1'b0};  // Read: LBA=4096, Size=2048
+            test_commands[3] = {32'h6EDCBA98, 32'd4096, 32'd8192, 31'b0, 1'b1};  // Write: LBA=8192, Size=4096
+            test_commands[4] = {32'h00000000, 32'd8192, 32'd16384, 31'b0, 1'b0}; // Read: LBA=16384, Size=8192
+            test_commands[5] = {32'h11223344, 32'd4096, 32'd32768, 31'b0, 1'b1}; // Write: LBA=32768, Size=4096
+            test_commands[6] = {32'h00000000, 32'd16384, 32'd65536, 31'b0, 1'b0}; // Read: LBA=65536, Size=16384
+            num_commands = 7;
+            $display("Using %0d default test commands", num_commands);
+        end
+    end
+    
+    // Initialize completion data
+    initial begin
+        for (int i = 0; i < 100; i++) begin
             nvme_cpl_data = 128'h0;  // Initialize to known value
         end
     end
-    // Test sequence
+    
+    // Initialize latency tracking arrays
+    initial begin
+        for (int i = 0; i < 100; i++) begin
+            command_start_time[i] = 0;
+            command_end_time[i] = 0;
+            command_latency[i] = 0;
+            latencies_sorted[i] = 0;
+        end
+        latency_count = 0;
+    end
+    
+    // Test sequence - now dynamic based on num_commands
     initial begin
         reset_n = 0;
         cmd_valid = 0;
@@ -1673,23 +1961,34 @@ module tb_windows_storage_stack_debug;
         #200;
         
         $display("=== Starting Command Processing ===");
+        $display("Number of commands to process: %0d", num_commands);
         $display("Block Layer States: 0=IDLE, 1=FETCH_IRP, 2=PARSE_IRP, 3=BUILD_MDL, 4=WAIT_MDL, 5=BUILD_SRB, 6=QUEUE_SRB, 7=COMPLETE");
         $display("NVMe States: 0=IDLE, 1=FETCH_SRB, 2=PARSE_SRB, 3=ALLOC_PRP, 4=WAIT_PRP, 5=BUILD_CMD, 6=SELECT_QUEUE, 7=SUBMIT_CMD, 8=WAIT_COMPLETION");
         $display("");
         
-        // Send test commands
-        for (command_index = 0; command_index < 7; command_index = command_index + 1) begin
+        // Send test commands - dynamic based on num_commands
+        if (num_commands == 0) begin
+            $display("ERROR: No commands to process!");
+            $finish;
+        end
+        
+        for (command_index = 0; command_index < num_commands; command_index = command_index + 1) begin
             @(posedge clk);
             cmd_valid = 1;
             cmd_data = test_commands[command_index];
+            
+            // Record start time for latency tracking
+            command_start_time[command_index] = stat_total_cycles;
+            $display("Time %0t: Recording start time for command %0d at cycle %0d", 
+                     $time, command_index, stat_total_cycles);
             
             // Wait for ready signal
             wait(cmd_ready);
             @(posedge clk);
             cmd_valid = 0;
             
-            $display("Time %0t: Sent command %0d - %s LBA=%0d, Size=%0d bytes", 
-                     $time, command_index+1,
+            $display("Time %0t: Sent command %0d/%0d - %s LBA=%0d, Size=%0d bytes", 
+                     $time, command_index+1, num_commands,
                      (test_commands[command_index][0] ? "WRITE" : "READ"),
                      test_commands[command_index][63:32],
                      test_commands[command_index][95:64]);
@@ -1698,7 +1997,7 @@ module tb_windows_storage_stack_debug;
             repeat(10) @(posedge clk);
         end
         
-        $display("\n=== All commands sent, monitoring pipeline ===");
+        $display("\n=== All %0d commands sent, monitoring pipeline ===", num_commands);
         
         // Monitor pipeline activity with debug outputs
         fork
@@ -1741,7 +2040,7 @@ module tb_windows_storage_stack_debug;
                     @(posedge clk);
                     if (stat_irps_created > irp_count) begin
                         irp_count = stat_irps_created;
-                        $display("Time %0t: STATS - IRP created (%0d total)", $time, irp_count);
+                        $display("Time %0t: STATS - IRP created (%0d total, expected %0d)", $time, irp_count, num_commands);
                     end
                 end
             end
@@ -1753,7 +2052,7 @@ module tb_windows_storage_stack_debug;
                     @(posedge clk);
                     if (stat_srbs_created > srb_count) begin
                         srb_count = stat_srbs_created;
-                        $display("Time %0t: STATS - SRB created (%0d total)", $time, srb_count);
+                        $display("Time %0t: STATS - SRB created (%0d total, expected %0d)", $time, srb_count, num_commands);
                     end
                 end
             end
@@ -1765,7 +2064,7 @@ module tb_windows_storage_stack_debug;
                     @(posedge clk);
                     if (stat_nvme_cmds_issued > nvme_cmd_count) begin
                         nvme_cmd_count = stat_nvme_cmds_issued;
-                        $display("Time %0t: STATS - NVMe command issued (%0d total)", $time, nvme_cmd_count);
+                        $display("Time %0t: STATS - NVMe command issued (%0d total, expected %0d)", $time, nvme_cmd_count, num_commands);
                     end
                 end
             end
@@ -1789,8 +2088,8 @@ module tb_windows_storage_stack_debug;
                         // Byte 0: opcode, Byte 1: flags, Bytes 2-3: command_id
                         last_cmd_id = nvme_cmd_data[31:16];
                         
-                        $display("Time %0t: NVMe - Accepting command %0d with ID %0d", 
-                                $time, cmd_counter, last_cmd_id);
+                        $display("Time %0t: NVMe - Accepting command %0d/%0d with ID %0d", 
+                                $time, cmd_counter, num_commands, last_cmd_id);
                         
                         // Start completion process
                         sending_completion = 1;
@@ -1823,10 +2122,12 @@ module tb_windows_storage_stack_debug;
                 end
             end
             
-            // Monitor completions
+            // Monitor completions - now dynamic based on num_commands
             begin : completion_monitor
-                automatic integer expected_completions = 7;
+                automatic integer expected_completions = num_commands;
                 automatic integer last_completion_count = 0;
+                
+                $display("Waiting for %0d completions...", expected_completions);
                 
                 while (completions_received < expected_completions) begin
                     @(posedge clk);
@@ -1850,16 +2151,21 @@ module tb_windows_storage_stack_debug;
                 end
                 
                 if (completions_received >= expected_completions) begin
-                    $display("\n=== All commands completed successfully ===");
+                    $display("\n=== All %0d commands completed successfully ===", num_commands);
+                    
+                    // Calculate and display latency statistics
+                    calculate_latency_statistics();
+                    
                     #1000;
                     print_final_statistics();
+                    write_final_statistics_to_file();
                     $finish;
                 end
             end
             
-            // Timeout
+            // Timeout - scale with number of commands
             begin : timeout
-                #1000000;  // 1ms timeout
+                #(1000000 + num_commands * 100000);  // Scale timeout with command count
                 $display("\n=== SIMULATION TIMEOUT ===");
                 $display("Pipeline stuck. Current debug states:");
                 $display("  Block Layer: State=%0d, IRP FIFO=%0d, SRB FIFO=%0d", 
@@ -1867,10 +2173,12 @@ module tb_windows_storage_stack_debug;
                 $display("  NVMe Driver: State=%0d, SRB FIFO=%0d, Queue Sum=%0d",
                          debug_nvme_state, debug_nvme_srb_fifo_count, debug_nvme_queue_counts_sum);
                 $display("\nCurrent statistics:");
+                $display("  Commands sent: %0d", num_commands);
                 $display("  IRPs: %0d, SRBs: %0d, NVMe Cmds: %0d, Completions: %0d",
                          stat_irps_created, stat_srbs_created, 
                          stat_nvme_cmds_issued, stat_nvme_cpls_received);
                 print_final_statistics();
+                write_final_statistics_to_file();
                 $finish;
             end
         join_any
@@ -1878,75 +2186,155 @@ module tb_windows_storage_stack_debug;
         // Stop all monitors
         disable fork;
     end
+    
+    // Monitor IRP IDs dynamically
     initial begin
-        automatic integer expected_irp_ids[0:6] = {0, 1, 2, 3, 4, 5, 6};
+        automatic integer expected_irp_ids[0:99];  // Up to 100 commands
         automatic integer irp_index = 0;
+        
+        // Initialize expected IRP IDs based on num_commands
+        for (integer i = 0; i < num_commands; i = i + 1) begin
+            expected_irp_ids[i] = i;
+        end
         
         forever begin
             @(posedge clk);
             
             // Check IRP creation
             if (debug_blk_state == 1) begin  // BL_FETCH_IRP
-                $display("Time %0t: Block layer fetching IRP, debug_irp_id=%0d, expected=%0d",
-                        $time, debug_blk_current_irp_id, expected_irp_ids[irp_index]);
-                if (debug_blk_current_irp_id != expected_irp_ids[irp_index]) begin
-                    $display("ERROR: IRP ID mismatch! Expected %0d, got %0d",
-                            expected_irp_ids[irp_index], debug_blk_current_irp_id);
+                if (irp_index < num_commands) begin
+                    $display("Time %0t: Block layer fetching IRP, debug_irp_id=%0d, expected=%0d",
+                            $time, debug_blk_current_irp_id, expected_irp_ids[irp_index]);
+                    if (debug_blk_current_irp_id != expected_irp_ids[irp_index]) begin
+                        $display("ERROR: IRP ID mismatch! Expected %0d, got %0d",
+                                expected_irp_ids[irp_index], debug_blk_current_irp_id);
+                    end
+                    irp_index = irp_index + 1;
                 end
-                irp_index = irp_index + 1;
-                if (irp_index >= 7) irp_index = 0;
             end
             
-            // Check completion
+            // Check completion and record end time
             if (completion_valid) begin
-                $display("Time %0t: Completion received for IRP %0d, status=%s",
-                        $time, completion_irp_id,
-                        (completion_status == 0 ? "SUCCESS" : "ERROR"));
+                // Record end time for latency calculation
+                if (completion_irp_id < num_commands) begin
+                    command_end_time[completion_irp_id] = stat_total_cycles;
+                    $display("Time %0t: Completion received for IRP %0d, status=%s, end_time=%0d",
+                            $time, completion_irp_id,
+                            (completion_status == 0 ? "SUCCESS" : "ERROR"),
+                            stat_total_cycles);
+                end
             end
         end
     end
     
-    // Function to print final statistics
+    // Function to calculate latency statistics
+    function void calculate_latency_statistics();
+        automatic integer i, j;
+        automatic integer temp_latency;
+        automatic integer p95_index, p99_index;
+        automatic integer valid_latencies = 0;
+        automatic integer total_latency = 0;
+        
+        $display("\n=== LATENCY STATISTICS CALCULATION ===");
+        
+        // Calculate latencies and count valid ones
+        for (i = 0; i < num_commands; i = i + 1) begin
+            if (command_start_time[i] > 0 && command_end_time[i] > 0) begin
+                if (command_end_time[i] >= command_start_time[i]) begin
+                    command_latency[i] = command_end_time[i] - command_start_time[i];
+                end else begin
+                    // Handle wrap-around
+                    command_latency[i] = (64'hFFFFFFFFFFFFFFFF - command_start_time[i]) + command_end_time[i] + 1;
+                end
+                latencies_sorted[valid_latencies] = command_latency[i];
+                valid_latencies = valid_latencies + 1;
+                $display("  Command %0d: Start=%0d, End=%0d, Latency=%0d cycles", 
+                        i, command_start_time[i], command_end_time[i], command_latency[i]);
+            end
+        end
+        
+        if (valid_latencies > 0) begin
+            // Sort latencies (bubble sort for simplicity)
+            for (i = 0; i < valid_latencies - 1; i = i + 1) begin
+                for (j = 0; j < valid_latencies - i - 1; j = j + 1) begin
+                    if (latencies_sorted[j] > latencies_sorted[j + 1]) begin
+                        temp_latency = latencies_sorted[j];
+                        latencies_sorted[j] = latencies_sorted[j + 1];
+                        latencies_sorted[j + 1] = temp_latency;
+                    end
+                end
+            end
+            
+            // Calculate percentiles
+            p95_index = (valid_latencies * 95 + 99) / 100; // Round up
+            p99_index = (valid_latencies * 99 + 99) / 100; // Round up
+            
+            // Ensure indices are within bounds
+            if (p95_index >= valid_latencies) p95_index = valid_latencies - 1;
+            if (p99_index >= valid_latencies) p99_index = valid_latencies - 1;
+            
+            $display("\n  Total commands with latency data: %0d", valid_latencies);
+            $display("  p95 latency: %0d cycles (index %0d)", latencies_sorted[p95_index], p95_index);
+            $display("  p99 latency: %0d cycles (index %0d)", latencies_sorted[p99_index], p99_index);
+            $display("  Min latency: %0d cycles", latencies_sorted[0]);
+            $display("  Max latency: %0d cycles", latencies_sorted[valid_latencies-1]);
+            
+            // Calculate average
+            for (i = 0; i < valid_latencies; i = i + 1) begin
+                total_latency = total_latency + latencies_sorted[i];
+            end
+            $display("  Average latency: %0.1f cycles", real'(total_latency) / real'(valid_latencies));
+        end else begin
+            $display("  No latency data available!");
+        end
+        $display("=======================================\n");
+    endfunction
+    
+    // Function to print final statistics - updated for dynamic command count and latency stats
     function void print_final_statistics();
         real bytes_per_cycle;
         real estimated_iops;
+        real efficiency;
+        real cycles_per_command;
+        real bytes_per_command;
+        real actual_throughput_cycles;
+        real actual_throughput_seconds;
         
         $display("\n=== FINAL WINDOWS STORAGE STACK STATISTICS ===");
         $display("Simulation Time: %0t ns", $time);
+        $display("Number of Commands Processed: %0d (expected %0d)", stat_total_commands, num_commands);
         $display("Total Clock Cycles: %0d", stat_total_cycles);
-        $display("Total Commands Processed: %0d", stat_total_commands);
-        $display("Total Bytes: %0d (Expected: 47,104)", stat_total_bytes);
-        $display("  Read Commands: %0d (Expected: 4)", stat_read_count);
-        $display("  Write Commands: %0d (Expected: 3)", stat_write_count);
+        $display("Total Bytes: %0d", stat_total_bytes);
+        $display("  Read Commands: %0d", stat_read_count);
+        $display("  Write Commands: %0d", stat_write_count);
         $display("Maximum Queue Depth: %0d", stat_max_queue_depth);
         $display("\nPipeline Statistics:");
-        $display("  IRPs Created: %0d", stat_irps_created);
-        $display("  SRBs Created: %0d", stat_srbs_created);
-        $display("  NVMe Commands Issued: %0d", stat_nvme_cmds_issued);
-        $display("  NVMe Completions Received: %0d", stat_nvme_cpls_received);
+        $display("  IRPs Created: %0d (expected %0d)", stat_irps_created, num_commands);
+        $display("  SRBs Created: %0d (expected %0d)", stat_srbs_created, num_commands);
+        $display("  NVMe Commands Issued: %0d (expected %0d)", stat_nvme_cmds_issued, num_commands);
+        $display("  NVMe Completions Received: %0d (expected %0d)", stat_nvme_cpls_received, num_commands);
+        
+        $display("\n=== LATENCY STATISTICS ===");
+        $display("  Commands with Latency Data: %0d", stat_commands_with_latency);
+        $display("  Minimum Latency: %0d cycles", stat_min_latency);
+        $display("  Maximum Latency: %0d cycles", stat_max_latency);
+        $display("  Average Latency: %0d cycles", stat_avg_latency);
+        $display("  95th Percentile (p95): %0d cycles", stat_p95_latency);
+        $display("  99th Percentile (p99): %0d cycles", stat_p99_latency);
         
         // Calculate throughput
-        if (stat_total_cycles > 0 && stat_total_bytes > 0) begin
-            automatic real peak_bytes_per_cycle = 64.0;  // 512-bit bus = 64 bytes per transfer
-            automatic real cycles_per_command = real'(stat_total_cycles) / real'(stat_total_commands);
-            automatic real bytes_per_command = real'(stat_total_bytes) / real'(stat_total_commands);
-            automatic real actual_throughput_cycles = real'(stat_total_bytes) / real'(stat_total_cycles);
-            automatic real actual_throughput_seconds = real'(actual_throughput_cycles) * real'(100_000_000.0);
-            automatic real efficiency;
-
+        if (stat_total_cycles > 0 && stat_total_bytes > 0 && stat_total_commands > 0) begin
             bytes_per_cycle = real'(stat_total_bytes) / real'(stat_total_cycles);
-            $display("\nPerformance Metrics:");
+            cycles_per_command = real'(stat_total_cycles) / real'(stat_total_commands);
+            bytes_per_command = real'(stat_total_bytes) / real'(stat_total_commands);
+            actual_throughput_cycles = real'(stat_total_bytes) / real'(stat_total_cycles);
+            actual_throughput_seconds = real'(actual_throughput_cycles) * real'(100_000_000.0);
+            
+            // Efficiency calculation
+            efficiency = (stat_total_bytes / (64.0*stat_total_cycles*8.0)) * 100.0;
+            
+            $display("\n=== PERFORMANCE METRICS ===");
             $display("  Bytes per Cycle: %0.4f", bytes_per_cycle);
-            
-            // Theoretical maximum: 512 bits = 64 bytes per cycle at 100% utilization
-            // But not every cycle transfers data
-            // A more realistic efficiency calculation:            
-            // Efficiency = (actual throughput) / (peak throughput)
-            // Peak throughput = 64 bytes/cycle * 100MHz = 6400 MB/s
-            // Actual throughput = (total_bytes / total_cycles) * 100MHz
-            //OLD: efficiency = (bytes_per_cycle / peak_bytes_per_cycle) * 100.0;
-            efficiency = ((stat_total_bytes / stat_total_cycles) / ( 64)) * 100.0;
-            
             $display("  Efficiency: %0.2f%%", efficiency);
             
             // Estimate IOPS at 100MHz
@@ -1955,8 +2343,131 @@ module tb_windows_storage_stack_debug;
             $display("  Average Cycles per Command: %0.1f", cycles_per_command);
             $display("  Average Bytes per Command: %0.1f", bytes_per_command);
             $display("  Average Throughput GB/s: %0.1f", actual_throughput_seconds/1_000_000_000.0);
+            
+            // Calculate average latency in microseconds (assuming 100MHz clock)
+            if (stat_avg_latency > 0) begin
+                automatic real avg_latency_us = real'(stat_avg_latency) / 100.0; // Convert cycles to us at 100MHz
+                automatic real p95_latency_us = real'(stat_p95_latency) / 100.0;
+                automatic real p99_latency_us = real'(stat_p99_latency) / 100.0;
+                $display("\n=== LATENCY IN REAL TIME ===");
+                $display("  Average Latency: %0.2f us", avg_latency_us);
+                $display("  p95 Latency: %0.2f us", p95_latency_us);
+                $display("  p99 Latency: %0.2f us", p99_latency_us);
+            end
+            
+            // Check completion status
+            if (stat_nvme_cpls_received == num_commands) begin
+                $display("\n  SUCCESS: All %0d commands completed successfully!", num_commands);
+            end else begin
+                $display("\n  WARNING: Only %0d/%0d commands completed", stat_nvme_cpls_received, num_commands);
+            end
         end
         $display("================================================\n");
+    endfunction
+    
+    // Function to write final statistics to file - updated with latency stats
+    function void write_final_statistics_to_file();
+        integer output_file;
+        real bytes_per_cycle;
+        real estimated_iops;
+        real cycles_per_command;
+        real bytes_per_command;
+        real actual_throughput_cycles;
+        real actual_throughput_seconds;
+        real efficiency;
+        real avg_latency_us, p95_latency_us, p99_latency_us;
+        
+        output_file = $fopen("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/hardware_output.txt", "w");
+        if (output_file == 0) begin
+            $display("ERROR: Could not open hardware_output.txt for writing");
+            return;
+        end
+        
+        // Calculate performance metrics if we have data
+        if (stat_total_cycles > 0 && stat_total_bytes > 0 && stat_total_commands > 0) begin
+            bytes_per_cycle = real'(stat_total_bytes) / real'(stat_total_cycles);
+            cycles_per_command = real'(stat_total_cycles) / real'(stat_total_commands);
+            bytes_per_command = real'(stat_total_bytes) / real'(stat_total_commands);
+            actual_throughput_cycles = real'(stat_total_bytes) / real'(stat_total_cycles);
+            actual_throughput_seconds = real'(actual_throughput_cycles) * real'(100_000_000.0);
+            efficiency = (stat_total_bytes / (64.0*stat_total_cycles*8.0)) * 100.0;
+            estimated_iops = (real'(stat_total_commands) / real'(stat_total_cycles)) * 100_000_000.0;
+            
+            // Calculate latency in microseconds
+            avg_latency_us = real'(stat_avg_latency) / 100.0;
+            p95_latency_us = real'(stat_p95_latency) / 100.0;
+            p99_latency_us = real'(stat_p99_latency) / 100.0;
+        end
+        
+        $fdisplay(output_file, "========================================================================");
+        $fdisplay(output_file, "WINDOWS STORAGE STACK - HARDWARE SIMULATION RESULTS");
+        $fdisplay(output_file, "========================================================================");
+        $fdisplay(output_file, "Timestamp: %0t ns", $time);
+        $fdisplay(output_file, "");
+        $fdisplay(output_file, "1. COMMAND STATISTICS");
+        $fdisplay(output_file, "   Total Commands Processed: %0d", stat_total_commands);
+        $fdisplay(output_file, "   Commands from Input File: %0d", num_commands);
+        $fdisplay(output_file, "   Read Commands:  %0d", stat_read_count);
+        $fdisplay(output_file, "   Write Commands: %0d", stat_write_count);
+        $fdisplay(output_file, "   Total Bytes:    %0d", stat_total_bytes);
+        $fdisplay(output_file, "");
+        
+        $fdisplay(output_file, "2. PIPELINE STATISTICS");
+        $fdisplay(output_file, "   IRPs Created:              %0d", stat_irps_created);
+        $fdisplay(output_file, "   SRBs Created:              %0d", stat_srbs_created);
+        $fdisplay(output_file, "   NVMe Commands Issued:      %0d", stat_nvme_cmds_issued);
+        $fdisplay(output_file, "   NVMe Completions Received: %0d", stat_nvme_cpls_received);
+        $fdisplay(output_file, "   Max Queue Depth:           %0d", stat_max_queue_depth);
+        $fdisplay(output_file, "");
+        
+        $fdisplay(output_file, "3. LATENCY STATISTICS (CYCLES)");
+        $fdisplay(output_file, "   Commands with Latency Data: %0d", stat_commands_with_latency);
+        $fdisplay(output_file, "   Minimum Latency:            %0d cycles", stat_min_latency);
+        $fdisplay(output_file, "   Maximum Latency:            %0d cycles", stat_max_latency);
+        $fdisplay(output_file, "   Average Latency:            %0d cycles", stat_avg_latency);
+        $fdisplay(output_file, "   95th Percentile (p95):      %0d cycles", stat_p95_latency);
+        $fdisplay(output_file, "   99th Percentile (p99):      %0d cycles", stat_p99_latency);
+        $fdisplay(output_file, "");
+        
+        $fdisplay(output_file, "4. LATENCY STATISTICS (MICROSECONDS @100MHz)");
+        $fdisplay(output_file, "   Average Latency:            %0.2f us", avg_latency_us);
+        $fdisplay(output_file, "   95th Percentile (p95):      %0.2f us", p95_latency_us);
+        $fdisplay(output_file, "   99th Percentile (p99):      %0.2f us", p99_latency_us);
+        $fdisplay(output_file, "");
+        
+        $fdisplay(output_file, "5. PERFORMANCE METRICS");
+        $fdisplay(output_file, "   Total Clock Cycles:         %0d", stat_total_cycles);
+        $fdisplay(output_file, "   Average Cycles per Command: %0.2f", cycles_per_command);
+        $fdisplay(output_file, "   Average Bytes per Command:  %0.2f", bytes_per_command);
+        $fdisplay(output_file, "   Bytes per Cycle:            %0.4f", bytes_per_cycle);
+        $fdisplay(output_file, "");
+        
+        $fdisplay(output_file, "6. THROUGHPUT ESTIMATES (100MHz Clock)");
+        $fdisplay(output_file, "   Estimated IOPS:             %0.0f", estimated_iops);
+        $fdisplay(output_file, "   Average Throughput:         %0.2f GB/s", actual_throughput_seconds/1_000_000_000.0);
+        $fdisplay(output_file, "   System Efficiency:          %0.2f%%", efficiency);
+        $fdisplay(output_file, "");
+        
+        $fdisplay(output_file, "7. COMPLETION STATUS");
+        if (stat_nvme_cpls_received == num_commands) begin
+            $fdisplay(output_file, "   SUCCESS: All %0d commands completed", num_commands);
+        end else begin
+            $fdisplay(output_file, "   WARNING: Only %0d/%0d commands completed", stat_nvme_cpls_received, num_commands);
+        end
+        $fdisplay(output_file, "");
+        
+        $fdisplay(output_file, "8. DEBUG STATE INFORMATION");
+        $fdisplay(output_file, "   Block Layer State:          %0d", debug_blk_state);
+        $fdisplay(output_file, "   NVMe Driver State:          %0d", debug_nvme_state);
+        $fdisplay(output_file, "   Block IRP FIFO Count:       %0d", debug_blk_fifo_count);
+        $fdisplay(output_file, "   Block SRB FIFO Count:       %0d", debug_blk_srb_fifo_count);
+        $fdisplay(output_file, "   NVMe SRB FIFO Count:        %0d", debug_nvme_srb_fifo_count);
+        $fdisplay(output_file, "   NVMe CPL FIFO Count:        %0d", debug_nvme_cpl_fifo_count);
+        $fdisplay(output_file, "   NVMe Queue Counts Sum:      %0d", debug_nvme_queue_counts_sum);
+        $fdisplay(output_file, "========================================================================");
+        
+        $fclose(output_file);
+        $display("Statistics written to hardware_output.txt");
     endfunction
     
 endmodule
