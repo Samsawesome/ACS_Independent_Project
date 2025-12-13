@@ -44,12 +44,3 @@ Timestamp: 15975000 ns
 7. COMPLETION STATUS
    SUCCESS: All 70 commands completed
 
-8. DEBUG STATE INFORMATION
-   Block Layer State:          0
-   NVMe Driver State:          0
-   Block IRP FIFO Count:       0
-   Block SRB FIFO Count:       0
-   NVMe SRB FIFO Count:        0
-   NVMe CPL FIFO Count:        0
-   NVMe Queue Counts Sum:      0
-========================================================================

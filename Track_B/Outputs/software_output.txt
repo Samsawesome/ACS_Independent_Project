@@ -1,0 +1,159 @@
+Windows Block Layer Performance Measurement
+CPU Frequency: 3.9 GHz
+Samsung 980 Pro 2TB Latencies:
+  Read: ~50.0 us, Write: ~30.0 us
+==========================================
+
+System call overhead: 866 cycles (0.222 us)
+Read 7 commands from file
+
+Starting warm-up phase (100 iterations)...
+Warm-up complete.
+
+Starting 3 measurement runs...
+
+--- Run 1/3 ---
+Run Statistics:
+  Total I/O time: 5775.39 ms
+  Avg time per command: 825.06 us
+  Throughput: 7.78 MB/s
+  Average IOPS: 1212.04
+  Latency samples collected: 7000
+  Min latency: 4.10 us
+  Avg latency: 824.88 us
+  P50 latency: 114.38 us
+  P90 latency: 1823.92 us
+  P95 latency: 1900.27 us
+  P99 latency: 2127.61 us
+  P99.9 latency: 5436.23 us
+  Max latency: 41638.37 us
+  Std Dev: 1002.01 us
+
+--- Run 2/3 ---
+Run Statistics:
+  Total I/O time: 5770.92 ms
+  Avg time per command: 824.42 us
+  Throughput: 7.78 MB/s
+  Average IOPS: 1212.98
+  Latency samples collected: 7000
+  Min latency: 3.68 us
+  Avg latency: 824.25 us
+  P50 latency: 116.84 us
+  P90 latency: 1813.97 us
+  P95 latency: 1893.87 us
+  P99 latency: 2068.02 us
+  P99.9 latency: 5467.75 us
+  Max latency: 51689.55 us
+  Std Dev: 1099.89 us
+
+--- Run 3/3 ---
+Run Statistics:
+  Total I/O time: 5722.63 ms
+  Avg time per command: 817.52 us
+  Throughput: 7.85 MB/s
+  Average IOPS: 1223.21
+  Latency samples collected: 7000
+  Min latency: 4.23 us
+  Avg latency: 817.36 us
+  P50 latency: 121.43 us
+  P90 latency: 1821.14 us
+  P95 latency: 1918.97 us
+  P99 latency: 2093.76 us
+  P99.9 latency: 3015.04 us
+  Max latency: 11436.77 us
+  Std Dev: 881.07 us
+
+==========================================
+=== FINAL AVERAGED RESULTS (3 runs) ===
+==========================================
+Total iterations per run: 1000
+Total commands processed per run: 7000 (4000 reads, 3000 writes)
+Average total I/O time: 5756.31 milliseconds
+Average time per command: 822.33 microseconds
+
+=== LATENCY DISTRIBUTION (combined samples) ===
+Total samples across all runs: 21000
+Min latency: 3.68 us
+Average latency: 822.16 us
+Standard deviation: 998.35 us
+Coefficient of variation: 121.4%
+
+=== LATENCY PERCENTILES ===
+P50 (median):     117.18 us
+P90:             1820.16 us (15.5x P50)
+P95:             1902.46 us (16.2x P50)
+P99:             2091.47 us (17.8x P50)
+P99.9:           3864.83 us (33.0x P50)
+Max:            51689.55 us (441.1x P50)
+
+=== LATENCY TAIL ANALYSIS ===
+P95 to P99 delta: 189.00 us (9.9% increase)
+P99 to P99.9 delta: 1773.36 us (84.8% increase)
+
+=== DETAILED CYCLE BREAKDOWN ===
+Total CPU cycles: 1137500000
+Kernel cycles (entire I/O stack): 1035937500 (91.1%)
+User cycles: 101562500 (8.9%)
+
+=== ESTIMATED COMPONENT BREAKDOWN ===
+Total elapsed cycles: 22449623097
+Estimated hardware cycles: 95184000 (0.4% of total time)
+Estimated block layer cycles: 564452100 (2.5% of total time)
+Remaining kernel cycles: 471485400 (2.1% of total time)
+Hardware cycles are 9.2% of kernel time
+
+=== PER-OPERATION AVERAGES ===
+Average kernel time per I/O: 147991 cycles (37.95 us)
+Average block layer per I/O: 80636 cycles (20.68 us)
+Average hardware per I/O: 13598 cycles (3.49 us)
+
+Average Throughput: 7.80 MB/s
+
+=== HARDWARE ACCELERATOR COMPARISON (WITH FREQUENCY SCALING) ===
+Hardware accelerator frequency: 100 MHz
+CPU frequency: 3900 MHz (3.9 GHz)
+Clock speed ratio: 39.0x
+Hardware accelerator overhead: 22.51 cycles at 100 MHz
+Equivalent at CPU frequency: 877.89 cycles at 3.9 GHz
+Hardware processing time: 225.10 ns (22.51 cycles * 10 ns/cycle)
+
+Comparison:
+  Hardware accelerator: 225.10 ns per command
+  Software block layer: 20675.90 ns per command
+
+Hardware accelerator is 91.9x faster (time-based)
+At 100 MHz equivalent: Software = 2068 cycles, Hardware = 22.51 cycles (91.9x speedup)
+
+=== LATENCY COMPARISON WITH HARDWARE ===
+Software P95 latency: 1902461.03 ns
+Software P99 latency: 2091465.64 ns
+Hardware worst-case: 2091465.00 ns
+
+Hardware accelerator provides more predictable latency (P95 within 2091465.0 ns)
+
+Average Throughput: 7.80 MB/s
+
+Average IOPS: 1216.06
+
+=== IOPS ANALYSIS ===
+Overall IOPS: 1216.06
+Read IOPS: 694.89
+Write IOPS: 521.17
+
+Theoretical Peak IOPS (single operation):
+  Based on P50 latency: 8533.73
+  Based on P95 latency: 525.63
+  Based on P99 latency: 478.13
+  Based on average latency: 1216.30
+
+IOPS Efficiency:
+  Achieved vs P50 theoretical: 14.2%
+  Achieved vs average theoretical: 100.0%
+
+IOPS Consistency Analysis:
+  Burst IOPS (100 operations at P50): 8533.73
+  Burst IOPS (100 operations at P99): 478.13
+  Burst vs sustained ratio: 7.02:1
+
+Operations per millisecond: 1.22
+Time per operation: 822.33 us (822331 ns)

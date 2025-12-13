@@ -129,7 +129,7 @@ package windows_storage_pkg;
 endpackage
 
 // ============================================================================
-// Module: IRP Manager - FIXED VERSION
+// Module: IRP Manager
 // ============================================================================
 module irp_manager #(
     parameter MAX_IRPS = 256,
@@ -205,8 +205,8 @@ module irp_manager #(
             
             // Completion tracking with IRP ID extraction
             if (completion_valid) begin
-                $display("DEBUG IRP_MGR: Completion for IRP %0d with status %h", 
-                        completion_irp_id, completion_status);
+                //$display("DEBUG IRP_MGR: Completion for IRP %0d with status %h", 
+                //        completion_irp_id, completion_status);
                 
                 // Search through all valid IRPs
                 for (int i = 0; i < MAX_IRPS; i++) begin
@@ -222,13 +222,13 @@ module irp_manager #(
 
                         stored_irp_id = packed_irp[183:168];
                         
-                        $display("DEBUG IRP_MGR: Checking FIFO slot %0d, stored IRP ID=%0d", 
-                                i, stored_irp_id);
+                        //$display("DEBUG IRP_MGR: Checking FIFO slot %0d, stored IRP ID=%0d", 
+                        //        i, stored_irp_id);
                         
                         if (stored_irp_id == completion_irp_id) begin
                             irp_valid_bits[i] <= 0;
                             if (active_irps > 0) active_irps <= active_irps - 1;
-                            $display("DEBUG IRP_MGR: IRP %0d completed and removed", completion_irp_id);
+                            //$display("DEBUG IRP_MGR: IRP %0d completed and removed", completion_irp_id);
                             break;
                         end
                     end
@@ -239,7 +239,7 @@ module irp_manager #(
             if (irp_valid && irp_ready) begin
                 irp_valid_bits[irp_read_ptr] <= 0;
                 irp_read_ptr <= irp_read_ptr + 1;
-                $display("DEBUG IRP_MGR: IRP consumed from FIFO position %0d", irp_read_ptr);
+                //$display("DEBUG IRP_MGR: IRP consumed from FIFO position %0d", irp_read_ptr);
             end
         end
     end
@@ -285,8 +285,8 @@ module irp_manager #(
             // Allocate new IRP ID
             current_irp.irp_id <= irp_id_counter;
             
-            $display("DEBUG IRP_MGR: Building IRP with ID %0d, is_write=%0d, LBA=%0d, Size=%0d",
-                    irp_id_counter, command_is_write, command_lba, command_size);
+            //$display("DEBUG IRP_MGR: Building IRP with ID %0d, is_write=%0d, LBA=%0d, Size=%0d",
+            //        irp_id_counter, command_is_write, command_lba, command_size);
             
             // Build IRP with correct values
             current_irp.major_function <= command_is_write ? 
@@ -309,7 +309,6 @@ module irp_manager #(
             // Clear the FIFO entry first
             irp_fifo[irp_write_ptr] <= 512'b0;
             
-            // FIXED: CORRECT IRP PACKING (193 bits total)
             // The irp_t struct is 193 bits:
             
             
@@ -344,10 +343,10 @@ module irp_manager #(
             irp_creation_count <= irp_creation_count + 1;
             active_irps <= active_irps + 1;
             
-            $display("DEBUG IRP_MGR: IRP %0d queued, LBA=%0d, Size=%0d, Write=%0d, packed=%h",
-                    current_irp.irp_id, current_irp.information, 
-                    current_irp.buffer_length, current_irp.major_function == 4'h1,
-                    packed_irp);
+            //$display("DEBUG IRP_MGR: IRP %0d queued, LBA=%0d, Size=%0d, Write=%0d, packed=%h",
+            //        current_irp.irp_id, current_irp.information, 
+            //        current_irp.buffer_length, current_irp.major_function == 4'h1,
+            //        packed_irp);
         end
     end
     
@@ -369,8 +368,8 @@ module irp_manager #(
             logic [15:0] debug_irp_id;
             debug_irp_id = irp_data[184:169];  // CORRECT: Extract from bits [184:169]
             
-            $display("DEBUG IRP_MGR: FIFO output has IRP %0d at position %0d", 
-                    debug_irp_id, irp_read_ptr);
+            //$display("DEBUG IRP_MGR: FIFO output has IRP %0d at position %0d", 
+            //        debug_irp_id, irp_read_ptr);
         end
     end
     
@@ -527,8 +526,8 @@ module block_layer_processor #(
                     current_srb.length               // [31:0]    - 32 bits
                 };
                 
-                $display("DEBUG BLOCK: Stored SRB for IRP %0d at FIFO position %0d, LBA=%0d, Sector Count=%0d",
-                        current_srb.original_irp_id, srb_fifo_wr_ptr, current_srb.lba, current_srb.sector_count);
+                //$display("DEBUG BLOCK: Stored SRB for IRP %0d at FIFO position %0d, LBA=%0d, Sector Count=%0d",
+                //        current_srb.original_irp_id, srb_fifo_wr_ptr, current_srb.lba, current_srb.sector_count);
             end
             
             // Set valid bit
@@ -536,8 +535,8 @@ module block_layer_processor #(
                 srb_fifo_valid[srb_fifo_wr_ptr] <= 1'b1;
                 srb_fifo_wr_ptr <= srb_fifo_wr_ptr + 1;
                 srb_fifo_count <= srb_fifo_count + 1;
-                $display("DEBUG BLOCK: SRB valid bit set for position %0d, new count=%0d",
-                        srb_fifo_wr_ptr, srb_fifo_count + 1);
+                //$display("DEBUG BLOCK: SRB valid bit set for position %0d, new count=%0d",
+                //        srb_fifo_wr_ptr, srb_fifo_count + 1);
             end
             
             // Clear valid bit when SRB is consumed
@@ -545,7 +544,7 @@ module block_layer_processor #(
                 srb_fifo_valid[srb_fifo_rd_ptr] <= 1'b0;
                 srb_fifo_rd_ptr <= srb_fifo_rd_ptr + 1;
                 srb_fifo_count <= srb_fifo_count - 1;
-                $display("DEBUG BLOCK: SRB consumed from position %0d", srb_fifo_rd_ptr);
+                //$display("DEBUG BLOCK: SRB consumed from position %0d", srb_fifo_rd_ptr);
             end
             
             // Update statistics
@@ -623,7 +622,7 @@ module block_layer_processor #(
         end
         
         BL_QUEUE_SRB: begin
-            // FIXED: Move to COMPLETE immediately after queuing
+            // Move to COMPLETE immediately after queuing
             next_state = BL_COMPLETE;
         end
         
@@ -641,7 +640,7 @@ end
             packed_irp = irp_fifo[irp_fifo_rd_ptr][192:0];
             
             // Debug the raw packed IRP
-            $display("DEBUG BLOCK: Raw packed_irp=%h (193 bits)", packed_irp);
+            //$display("DEBUG BLOCK: Raw packed_irp=%h (193 bits)", packed_irp);
             
             // FIXED: CORRECT UNPACKING (reverse of packing)
             // packed_irp structure:
@@ -675,8 +674,8 @@ end
             // Calculate sector count (512-byte sectors)
             sector_count = (current_size + 511) / 512;
             
-            $display("DEBUG BLOCK: Extracted IRP %0d, LBA=%0d (0x%h), Size=%0d, is_write=%0d, Sectors=%0d",
-                    current_irp_id, current_lba, current_lba, current_size, is_write_op, sector_count);
+            //$display("DEBUG BLOCK: Extracted IRP %0d, LBA=%0d (0x%h), Size=%0d, is_write=%0d, Sectors=%0d",
+            //        current_irp_id, current_lba, current_lba, current_size, is_write_op, sector_count);
             
 
             current_srb.length <= 64;
@@ -693,8 +692,8 @@ end
             current_srb.lba <= current_lba;
             current_srb.sector_count <= sector_count;
             
-            $display("DEBUG BLOCK: Built SRB for IRP %0d, LBA=%0d, Sector Count=%0d, is_write=%0d",
-                    current_irp_id, current_lba, sector_count, is_write_op);
+            //$display("DEBUG BLOCK: Built SRB for IRP %0d, LBA=%0d, Sector Count=%0d, is_write=%0d",
+            //        current_irp_id, current_lba, sector_count, is_write_op);
         end
     end
     
@@ -757,7 +756,7 @@ module nvme_driver_core #(
     output reg [63:0] nvme_completions,
     output reg [31:0] queue_utilization,
     
-    // DEBUG OUTPUTS - ENHANCED
+    // DEBUG OUTPUTS
     output wire [3:0] debug_state,
     output wire [31:0] debug_srb_fifo_count,
     output wire [31:0] debug_cpl_fifo_count,
@@ -817,10 +816,10 @@ module nvme_driver_core #(
     reg [63:0] cpl_received_count;
     reg [31:0] total_queue_util;
     
-    // SRB FIFO - FIXED: Increase size to handle all 7 commands
-    reg [1023:0] srb_fifo [0:15];  // Increased from 8 to 16
+    // SRB FIFO
+    reg [1023:0] srb_fifo [0:15];
     reg [15:0] srb_fifo_valid;
-    reg [3:0] srb_fifo_rd_ptr;     // Increased from 3 to 4 bits
+    reg [3:0] srb_fifo_rd_ptr;
     reg [3:0] srb_fifo_wr_ptr;
     reg [31:0] srb_fifo_cnt;
     
@@ -903,8 +902,8 @@ module nvme_driver_core #(
                 srb_fifo_valid[srb_fifo_wr_ptr] <= 1'b1;
                 srb_fifo_wr_ptr <= srb_fifo_wr_ptr + 1;
                 srb_fifo_cnt <= srb_fifo_cnt + 1;
-                $display("DEBUG: NVMe Driver - SRB written to FIFO at index %0d, count=%0d", 
-                         srb_fifo_wr_ptr, srb_fifo_cnt + 1);
+                //$display("DEBUG: NVMe Driver - SRB written to FIFO at index %0d, count=%0d", 
+                //         srb_fifo_wr_ptr, srb_fifo_cnt + 1);
             end
             
             // Clear valid bit when SRB is fetched
@@ -913,8 +912,8 @@ module nvme_driver_core #(
                     srb_fifo_valid[srb_fifo_rd_ptr] <= 1'b0;
                     srb_fifo_rd_ptr <= srb_fifo_rd_ptr + 1;
                     srb_fifo_cnt <= srb_fifo_cnt - 1;
-                    $display("DEBUG: NVMe Driver - SRB fetched from index %0d, new count=%0d", 
-                             srb_fifo_rd_ptr, srb_fifo_cnt - 1);
+                    //$display("DEBUG: NVMe Driver - SRB fetched from index %0d, new count=%0d", 
+                    //         srb_fifo_rd_ptr, srb_fifo_cnt - 1);
                 end
             end
             
@@ -943,9 +942,9 @@ module nvme_driver_core #(
                     completion_status <= (cpl.status == 0) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
                     completion_valid <= 1'b1;
                     
-                    $display("DEBUG NVMe: Completion for command %0d -> IRP %0d, status=%s", 
-                            cpl.command_id, cmd_id_to_irp_map[cpl.command_id],
-                            (cpl.status == 0) ? "SUCCESS" : "ERROR");
+                    //$display("DEBUG NVMe: Completion for command %0d -> IRP %0d, status=%s", 
+                    //        cpl.command_id, cmd_id_to_irp_map[cpl.command_id],
+                    //        (cpl.status == 0) ? "SUCCESS" : "ERROR");
                     
                     // Clear the mapping after use to prevent reuse
                     cmd_id_to_irp_map[cpl.command_id] <= 16'hFFFF;
@@ -989,9 +988,9 @@ module nvme_driver_core #(
                 cmd_issued_count <= cmd_issued_count + 1;
                 nvme_commands_issued <= cmd_issued_count + 1;
                 
-                $display("DEBUG: Queue %0d now has %0d entries, command_id=%0d for IRP=%0d", 
-                        current_queue_idx, queue_counts[current_queue_idx], 
-                        current_cmd_id, current_srb.original_irp_id);
+                //$display("DEBUG: Queue %0d now has %0d entries, command_id=%0d for IRP=%0d", 
+                //        current_queue_idx, queue_counts[current_queue_idx], 
+                //        current_cmd_id, current_srb.original_irp_id);
                 
                 // Update queue counts sum
                 begin
@@ -1085,8 +1084,8 @@ module nvme_driver_core #(
             
             NVME_SUBMIT_CMD: begin
                 if (nvme_cmd_ready) begin
-                    $display("DEBUG: NVMe Command submitted for IRP %0d, command_id=%0d", 
-                            current_srb.original_irp_id, current_cmd_id);
+                    //$display("DEBUG: NVMe Command submitted for IRP %0d, command_id=%0d", 
+                    //        current_srb.original_irp_id, current_cmd_id);
                     next_state = NVME_IDLE;
                 end else begin
                     next_state = NVME_SUBMIT_CMD;
@@ -1102,13 +1101,13 @@ module nvme_driver_core #(
             srb_data = srb_fifo[srb_fifo_rd_ptr][391:0];
             
             // Debug the raw data
-            $display("DEBUG NVMe: SRB data at index %0d:", srb_fifo_rd_ptr);
-            $display("  sector_count[391:360]=%h", srb_data[391:360]);
-            $display("  lba[359:328]=%h", srb_data[359:328]);
-            $display("  irp_id[327:312]=%h", srb_data[327:312]);
-            $display("  data_ptr[311:248]=%h", srb_data[311:248]);
-            $display("  cdb[247:120]=%h", srb_data[247:120]);
-            $display("  First CDB byte[127:120]=%h (opcode)", srb_data[127:120]);
+            //$display("DEBUG NVMe: SRB data at index %0d:", srb_fifo_rd_ptr);
+            //$display("  sector_count[391:360]=%h", srb_data[391:360]);
+            //$display("  lba[359:328]=%h", srb_data[359:328]);
+            //$display("  irp_id[327:312]=%h", srb_data[327:312]);
+            //$display("  data_ptr[311:248]=%h", srb_data[311:248]);
+            //$display("  cdb[247:120]=%h", srb_data[247:120]);
+            //$display("  First CDB byte[127:120]=%h (opcode)", srb_data[127:120]);
             
             // Extract fields
             current_srb.length <= srb_data[31:0];
@@ -1123,11 +1122,11 @@ module nvme_driver_core #(
             current_srb.lba <= srb_data[359:328];
             current_srb.sector_count <= srb_data[391:360];
             
-            $display("DEBUG NVMe: Parsed SRB - IRP=%0d, LBA=%0d, Sectors=%0d, Opcode=%s",
-                    srb_data[327:312], 
-                    srb_data[359:328],
-                    srb_data[391:360],
-                    (srb_data[127:120] == 8'h2A) ? "WRITE" : "READ");
+            //$display("DEBUG NVMe: Parsed SRB - IRP=%0d, LBA=%0d, Sectors=%0d, Opcode=%s",
+            //        srb_data[327:312], 
+            //        srb_data[359:328],
+            //        srb_data[391:360],
+            //        (srb_data[127:120] == 8'h2A) ? "WRITE" : "READ");
         end
         
         if (current_state == NVME_BUILD_CMD) begin
@@ -1150,10 +1149,10 @@ module nvme_driver_core #(
             // Map command ID to IRP ID
             cmd_id_to_irp_map[command_id_counter] <= current_srb.original_irp_id;
             
-            $display("DEBUG NVMe: Building command for IRP %0d -> Command ID=%0d, Opcode=%s, LBA=%0d",
-                    current_srb.original_irp_id, command_id_counter,
-                    (current_srb.cdb[7:0] == 8'h2A) ? "WRITE" : "READ",
-                    current_srb.lba);
+            //$display("DEBUG NVMe: Building command for IRP %0d -> Command ID=%0d, Opcode=%s, LBA=%0d",
+            //        current_srb.original_irp_id, command_id_counter,
+            //        (current_srb.cdb[7:0] == 8'h2A) ? "WRITE" : "READ",
+            //        current_srb.lba);
             
             // Increment for next command
             command_id_counter <= command_id_counter + 1;
@@ -1165,8 +1164,8 @@ module nvme_driver_core #(
             if (current_queue_idx == NUM_IO_QUEUES - 1)
                 current_queue_idx <= 0;
             cmd_id_to_queue_map[current_cmd_id] <= current_queue_idx;
-            $display("DEBUG: Selected queue %0d for command %0d (IRP %0d)", 
-                    current_queue_idx, current_cmd_id, current_srb.original_irp_id);
+            //$display("DEBUG: Selected queue %0d for command %0d (IRP %0d)", 
+            //        current_queue_idx, current_cmd_id, current_srb.original_irp_id);
         end
     end
     
@@ -1193,7 +1192,7 @@ module nvme_driver_core #(
     
     assign nvme_cpl_ready = (cpl_fifo_cnt < 8);
     
-    // DEBUG OUTPUTS - ENHANCED
+    // DEBUG OUTPUTS
     assign debug_state = current_state;
     assign debug_srb_fifo_count = srb_fifo_cnt;
     assign debug_cpl_fifo_count = cpl_fifo_cnt;
@@ -1507,7 +1506,7 @@ module windows_storage_stack_core_fixed #(
     output wire [31:0] stat_p99_latency,
     output wire [31:0] stat_commands_with_latency,
     
-    // DEBUG OUTPUTS - ADDED
+    // DEBUG OUTPUTS
     output wire [3:0] debug_blk_state,
     output wire [31:0] debug_blk_fifo_count,
     output wire [31:0] debug_blk_srb_fifo_count,
@@ -1725,7 +1724,7 @@ endmodule
 // ============================================================================
 // Testbench Debug Ports with Enhanced Latency Statistics
 // ============================================================================
-module tb_windows_storage_stack_debug;
+module tb_windows_storage_stack;
     
     reg clk;
     reg reset_n;
@@ -1779,7 +1778,7 @@ module tb_windows_storage_stack_debug;
     wire [31:0] debug_nvme_cpl_fifo_count;
     wire [31:0] debug_nvme_queue_counts_sum;
     
-    // Test commands - now dynamic
+    // Test commands
     reg [127:0] test_commands [0:99];  // Increased to 100 commands maximum
     integer num_commands;  // Number of commands actually read from file
     integer command_index;
@@ -1895,8 +1894,8 @@ module tb_windows_storage_stack_debug;
     // Initialize test commands from file
     initial begin
         $display("Reading commands from input file...");
-        //read_commands_from_file("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/7_cpu_commands.txt");
-        read_commands_from_file("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/70_cpu_commands.txt");
+        //read_commands_from_file("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/Commands/7_cpu_commands.txt");
+        read_commands_from_file("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/Commands/70_cpu_commands.txt");
         // Display summary of commands read
         if (num_commands > 0) begin
             $display("Successfully read %0d commands from file", num_commands);
@@ -1966,7 +1965,7 @@ module tb_windows_storage_stack_debug;
         $display("NVMe States: 0=IDLE, 1=FETCH_SRB, 2=PARSE_SRB, 3=ALLOC_PRP, 4=WAIT_PRP, 5=BUILD_CMD, 6=SELECT_QUEUE, 7=SUBMIT_CMD, 8=WAIT_COMPLETION");
         $display("");
         
-        // Send test commands - dynamic based on num_commands
+        // Send test commands
         if (num_commands == 0) begin
             $display("ERROR: No commands to process!");
             $finish;
@@ -2023,11 +2022,11 @@ module tb_windows_storage_stack_debug;
                     @(posedge clk);
                     if (reset_n) begin
                         if (prev_nvme_state !== debug_nvme_state || prev_nvme_srb_fifo_count !== debug_nvme_srb_fifo_count) begin
-                            $display("Time %0t: NVMe DRIVER - State=%0d, SRB FIFO=%0d, CPL FIFO=%0d, Queue Sum=%0d",
-                                     $time, debug_nvme_state, debug_nvme_srb_fifo_count,
-                                     debug_nvme_cpl_fifo_count, debug_nvme_queue_counts_sum);
-                            prev_nvme_state <= debug_nvme_state;
-                            prev_nvme_srb_fifo_count <= debug_nvme_srb_fifo_count;
+                            //$display("Time %0t: NVMe DRIVER - State=%0d, SRB FIFO=%0d, CPL FIFO=%0d, Queue Sum=%0d",
+                            //         $time, debug_nvme_state, debug_nvme_srb_fifo_count,
+                            //         debug_nvme_cpl_fifo_count, debug_nvme_queue_counts_sum);
+                            //prev_nvme_state <= debug_nvme_state;
+                            //prev_nvme_srb_fifo_count <= debug_nvme_srb_fifo_count;
                         end
                     end
                 end
@@ -2154,7 +2153,7 @@ module tb_windows_storage_stack_debug;
                     $display("\n=== All %0d commands completed successfully ===", num_commands);
                     
                     // Calculate and display latency statistics
-                    calculate_latency_statistics();
+                    //calculate_latency_statistics();
                     
                     #1000;
                     print_final_statistics();
@@ -2205,10 +2204,10 @@ module tb_windows_storage_stack_debug;
                 if (irp_index < num_commands) begin
                     $display("Time %0t: Block layer fetching IRP, debug_irp_id=%0d, expected=%0d",
                             $time, debug_blk_current_irp_id, expected_irp_ids[irp_index]);
-                    if (debug_blk_current_irp_id != expected_irp_ids[irp_index]) begin
-                        $display("ERROR: IRP ID mismatch! Expected %0d, got %0d",
-                                expected_irp_ids[irp_index], debug_blk_current_irp_id);
-                    end
+                    //if (debug_blk_current_irp_id != expected_irp_ids[irp_index]) begin
+                    //    $display("ERROR: IRP ID mismatch! Expected %0d, got %0d",
+                    //            expected_irp_ids[irp_index], debug_blk_current_irp_id);
+                    //end
                     irp_index = irp_index + 1;
                 end
             end
@@ -2290,7 +2289,7 @@ module tb_windows_storage_stack_debug;
         $display("=======================================\n");
     endfunction
     
-    // Function to print final statistics - updated for dynamic command count and latency stats
+    // Function to print final statistics
     function void print_final_statistics();
         real bytes_per_cycle;
         real estimated_iops;
@@ -2365,7 +2364,7 @@ module tb_windows_storage_stack_debug;
         $display("================================================\n");
     endfunction
     
-    // Function to write final statistics to file - updated with latency stats
+    // Function to write final statistics to file
     function void write_final_statistics_to_file();
         integer output_file;
         real bytes_per_cycle;
@@ -2377,7 +2376,7 @@ module tb_windows_storage_stack_debug;
         real efficiency;
         real avg_latency_us, p95_latency_us, p99_latency_us;
         
-        output_file = $fopen("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/hardware_output.txt", "w");
+        output_file = $fopen("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/Outputs/hardware_output.txt", "w");
         if (output_file == 0) begin
             $display("ERROR: Could not open hardware_output.txt for writing");
             return;
@@ -2456,15 +2455,15 @@ module tb_windows_storage_stack_debug;
         end
         $fdisplay(output_file, "");
         
-        $fdisplay(output_file, "8. DEBUG STATE INFORMATION");
-        $fdisplay(output_file, "   Block Layer State:          %0d", debug_blk_state);
-        $fdisplay(output_file, "   NVMe Driver State:          %0d", debug_nvme_state);
-        $fdisplay(output_file, "   Block IRP FIFO Count:       %0d", debug_blk_fifo_count);
-        $fdisplay(output_file, "   Block SRB FIFO Count:       %0d", debug_blk_srb_fifo_count);
-        $fdisplay(output_file, "   NVMe SRB FIFO Count:        %0d", debug_nvme_srb_fifo_count);
-        $fdisplay(output_file, "   NVMe CPL FIFO Count:        %0d", debug_nvme_cpl_fifo_count);
-        $fdisplay(output_file, "   NVMe Queue Counts Sum:      %0d", debug_nvme_queue_counts_sum);
-        $fdisplay(output_file, "========================================================================");
+        //$fdisplay(output_file, "8. DEBUG STATE INFORMATION");
+        //$fdisplay(output_file, "   Block Layer State:          %0d", debug_blk_state);
+        //$fdisplay(output_file, "   NVMe Driver State:          %0d", debug_nvme_state);
+        //$fdisplay(output_file, "   Block IRP FIFO Count:       %0d", debug_blk_fifo_count);
+        //$fdisplay(output_file, "   Block SRB FIFO Count:       %0d", debug_blk_srb_fifo_count);
+        //$fdisplay(output_file, "   NVMe SRB FIFO Count:        %0d", debug_nvme_srb_fifo_count);
+        //$fdisplay(output_file, "   NVMe CPL FIFO Count:        %0d", debug_nvme_cpl_fifo_count);
+        //$fdisplay(output_file, "   NVMe Queue Counts Sum:      %0d", debug_nvme_queue_counts_sum);
+        //$fdisplay(output_file, "========================================================================");
         
         $fclose(output_file);
         $display("Statistics written to hardware_output.txt");

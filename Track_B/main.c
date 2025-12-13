@@ -17,9 +17,12 @@
 #define WARMUP_ITERATIONS 100  // Warm-up iterations
 #define MAX_LATENCY_SAMPLES (MAX_COMMANDS * ITERATIONS)  // Maximum samples we can store
 
-#define BLOCK_LAYER_OVERHEAD_PER_CMD 25000  // Based on actual measurements
+#define BLOCK_LAYER_OVERHEAD_PER_CMD 25000  // Based on disk_track.etl
 #define PCIE_PROTOCOL_OVERHEAD_CYCLES 1500
 #define CONTROLLER_OVERHEAD_CYCLES 2000
+
+#define SSD_READ_LATENCY 50.0
+#define SSD_WRITE_LATENCY 30.0
 
 typedef struct {
     int opcode;      // 0: read, 1: write
@@ -81,6 +84,8 @@ void PrintAveragedStatistics();
 void AverageStats();
 void CalculateLatencyStatistics(PERFORMANCE_STATS* stats);
 int CompareULONGLONG(const void* a, const void* b);
+double CalculateIOPS(ULONGLONG total_operations, double total_time_seconds);
+void PrintIOPSAnalysis(PERFORMANCE_STATS* stats);
 void Cleanup();
 
 // Helper function to convert FILETIME to ULONGLONG
@@ -104,10 +109,10 @@ ULONGLONG EstimateHardwareLatencyCycles(int opcode, DWORD length) {
     
     if (opcode == 0) { // Read
         // Realistic SSD read latency including protocol overhead
-        hardware_latency_us = 50.0/16;  // More realistic: 50µs for 4K random read
+        hardware_latency_us = SSD_READ_LATENCY/16;  // More realistic: 50µs for 4K random read
     } else { // Write
         // Realistic SSD write latency
-        hardware_latency_us = 30.0/16;  // More realistic: 30µs for 4K random write
+        hardware_latency_us = SSD_WRITE_LATENCY/16;  // More realistic: 30µs for 4K random write
     }
     
     // Add PCIe and controller overhead
@@ -151,6 +156,83 @@ int CompareULONGLONG(const void* a, const void* b) {
     if (val_a < val_b) return -1;
     if (val_a > val_b) return 1;
     return 0;
+}
+
+double CalculateIOPS(ULONGLONG total_operations, double total_time_seconds) {
+    if (total_time_seconds <= 0.0) {
+        return 0.0;
+    }
+    return (double)total_operations / total_time_seconds;
+}
+
+void PrintIOPSAnalysis(PERFORMANCE_STATS* stats) {
+    double total_time_seconds = (double)stats->total_cycles / (cpu_frequency_ghz * 1e9);
+    
+    // Calculate overall IOPS
+    double overall_iops = CalculateIOPS(stats->io_count, total_time_seconds);
+    double read_iops = CalculateIOPS(stats->read_count, total_time_seconds);
+    double write_iops = CalculateIOPS(stats->write_count, total_time_seconds);
+    
+    PrintToFile("\n=== IOPS ANALYSIS ===\n");
+    PrintToFile("Overall IOPS: %.2f\n", overall_iops);
+    PrintToFile("Read IOPS: %.2f\n", read_iops);
+    PrintToFile("Write IOPS: %.2f\n", write_iops);
+    
+    // If we have latency samples, we can estimate peak/burst IOPS
+    if (stats->sample_count > 0) {
+        // Calculate time for a single operation at P50, P95, P99 latencies
+        double p50_time_us = CyclesToMicroseconds(stats->p50_latency_cycles);
+        double p95_time_us = CyclesToMicroseconds(stats->p95_latency_cycles);
+        double p99_time_us = CyclesToMicroseconds(stats->p99_latency_cycles);
+        double avg_time_us = CyclesToMicroseconds(stats->avg_latency_cycles);
+        
+        // Calculate theoretical peak IOPS (1 operation / latency)
+        double peak_iops_p50 = 1000000.0 / p50_time_us;  // 1 second = 1,000,000 microseconds
+        double peak_iops_p95 = 1000000.0 / p95_time_us;
+        double peak_iops_p99 = 1000000.0 / p99_time_us;
+        double peak_iops_avg = 1000000.0 / avg_time_us;
+        
+        PrintToFile("\nTheoretical Peak IOPS (single operation):\n");
+        PrintToFile("  Based on P50 latency: %.2f\n", peak_iops_p50);
+        PrintToFile("  Based on P95 latency: %.2f\n", peak_iops_p95);
+        PrintToFile("  Based on P99 latency: %.2f\n", peak_iops_p99);
+        PrintToFile("  Based on average latency: %.2f\n", peak_iops_avg);
+        
+        // Calculate IOPS efficiency (achieved vs theoretical)
+        double efficiency_vs_p50 = (overall_iops / peak_iops_p50) * 100.0;
+        double efficiency_vs_avg = (overall_iops / peak_iops_avg) * 100.0;
+        
+        PrintToFile("\nIOPS Efficiency:\n");
+        PrintToFile("  Achieved vs P50 theoretical: %.1f%%\n", efficiency_vs_p50);
+        PrintToFile("  Achieved vs average theoretical: %.1f%%\n", efficiency_vs_avg);
+        
+        // Calculate the IOPS at different percentile windows
+        if (stats->sample_count >= 1000) {  // Only if we have enough samples
+            PrintToFile("\nIOPS Consistency Analysis:\n");
+            
+            // Calculate IOPS for different time windows (estimated)
+            // For 100 samples at P50 latency
+            double time_100_ops_p50 = p50_time_us * 100.0 / 1000000.0;  // Convert to seconds
+            double iops_100_p50 = 100.0 / time_100_ops_p50;
+            
+            // For 100 samples at P99 latency (worst-case burst)
+            double time_100_ops_p99 = p99_time_us * 100.0 / 1000000.0;
+            double iops_100_p99 = 100.0 / time_100_ops_p99;
+            
+            PrintToFile("  Burst IOPS (100 operations at P50): %.2f\n", iops_100_p50);
+            PrintToFile("  Burst IOPS (100 operations at P99): %.2f\n", iops_100_p99);
+            PrintToFile("  Burst vs sustained ratio: %.2f:1\n", iops_100_p50 / overall_iops);
+        }
+    }
+    
+    // Calculate operations per millisecond for easy reference
+    double ops_per_ms = overall_iops / 1000.0;
+    PrintToFile("\nOperations per millisecond: %.2f\n", ops_per_ms);
+    
+    // Calculate the time per operation in different units
+    double time_per_op_us = 1000000.0 / overall_iops;
+    double time_per_op_ns = time_per_op_us * 1000.0;
+    PrintToFile("Time per operation: %.2f us (%.0f ns)\n", time_per_op_us, time_per_op_ns);
 }
 
 // Calculate latency statistics including percentiles
@@ -199,7 +281,7 @@ void CalculateLatencyStatistics(PERFORMANCE_STATS* stats) {
 
 int main() {
     // Open output file
-    output_file = fopen("software_output.txt", "w");
+    output_file = fopen("Outputs/software_output.txt", "w");
     if (!output_file) {
         printf("Error: Failed to open output file software_output.txt\n");
         return 1;
@@ -212,7 +294,7 @@ int main() {
     PrintToFile("Windows Block Layer Performance Measurement\n");
     PrintToFile("CPU Frequency: %.1f GHz\n", cpu_frequency_ghz);
     PrintToFile("Samsung 980 Pro 2TB Latencies:\n");
-    PrintToFile("  Read: ~%.1f us, Write: ~%.1f us\n", 50.0, 30.0);
+    PrintToFile("  Read: ~%.1f us, Write: ~%.1f us\n", SSD_READ_LATENCY, SSD_WRITE_LATENCY);
     PrintToFile("==========================================\n\n");
 
     // Measure system call overhead first
@@ -221,7 +303,7 @@ int main() {
            syscall_overhead, (double)syscall_overhead / (cpu_frequency_ghz * 1000.0));
 
     // Initialize
-    if (!ReadCommandsFromFile("software_cpu_commands.txt")) {
+    if (!ReadCommandsFromFile("Commands/software_cpu_commands.txt")) {
         PrintToFile("Error: Failed to read commands file\n");
         fclose(output_file);
         return 1;
@@ -643,6 +725,10 @@ void PrintStatistics(PERFORMANCE_STATS* stats) {
     double data_rate_mbps = total_data_mb / total_time_seconds;
     PrintToFile("  Throughput: %.2f MB/s\n", data_rate_mbps);
     
+    // Add IOPS calculation
+    double overall_iops = CalculateIOPS(stats->io_count, total_time_seconds);
+    PrintToFile("  Average IOPS: %.2f\n", overall_iops);
+    
     // Print latency percentiles if available
     if (stats->sample_count > 0) {
         PrintToFile("  Latency samples collected: %llu\n", stats->sample_count);
@@ -819,6 +905,18 @@ void PrintAveragedStatistics() {
                 PrintToFile("\nHardware accelerator provides more predictable latency (P95 within %.1f ns)\n", 8500);
             }
         }
+
+            // Calculate throughput
+            double total_data_mb = (double)avg_stats.total_bytes / (1024.0 * 1024.0);
+            double data_rate_mbps = total_data_mb / total_time_seconds;
+            
+            PrintToFile("\nAverage Throughput: %.2f MB/s\n", data_rate_mbps);
+            
+            // Add IOPS analysis for averaged statistics
+            PrintToFile("\nAverage IOPS: %.2f\n", CalculateIOPS(avg_stats.io_count, total_time_seconds));
+            
+            // Add detailed IOPS analysis
+            PrintIOPSAnalysis(&avg_stats);
     }
 }
 
