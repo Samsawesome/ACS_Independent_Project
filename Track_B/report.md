@@ -108,7 +108,7 @@ Hardware: 22.51 cycles (89.9x speedup)
 #### 3.2 Latency Predictability
 Software P95 latency: 1,838,684.10 ns  
 Software P99 latency: 1,997,822.56 ns  
-Hardware worst-case: 8,500.00 ns  
+Hardware worst-case: ~8,500.00 ns  
 
 Analysis: Hardware accelerator provides more predictable latency, keeping even worst-case performance far below software's P99 boundaries.  
 
@@ -136,12 +136,12 @@ Achieved vs P50 theoretical: 14.1%
 4. **Predictable Performance**: Hardware eliminates software's heavy tail latency
 5. **Efficiency**: Despite 100 MHz clock (vs 3.9 GHz CPU), hardware achieves 89.9x speedup
 
-### 6. Limitations and Context
+### 6. Limitations and Difficulties
 
-1. **Test Scale**: Hardware simulation processed 70 commands vs Software's 21,000 samples
-2. **Frequency Difference**: Hardware runs at 100 MHz vs CPU at 3.9 GHz
-3. **Workload Characteristics**: Both tests used mixed read/write operations
-4. **Platform Differences**: Hardware simulation vs real Windows storage stack
+1. **Test Scale**: Hardware simulation processed 70 commands while the software processed 21,000 commands
+2. **OS Difficulties**: There is no simple accurate way to precisely measure the amount of time Windows spends in the block layer, so an estimate had to be used
+3. **Workload Characteristics**: Both tests used mixed read/write operations, but they were the same commands repeated over and over
+4. **Background Processes**: Windows background process meant that the software's reads and writes may have not been prioritized, and context switched could have inflated the software latencies
 
 ### 7. Conclusion
 
