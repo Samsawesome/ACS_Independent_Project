@@ -2,7 +2,7 @@ module io_processor #(
     parameter NUM_IO_QUEUES = 8,
     parameter QUEUE_DEPTH = 32,
     parameter DATA_WIDTH = 512,
-    parameter SSD_LATENCY_CYCLES = 5000      // realistic read/write delay
+    parameter SSD_LATENCY_CYCLES = 5000
 )(
     input wire clk,
     input wire reset_n,
@@ -10,26 +10,27 @@ module io_processor #(
     output reg         ctrl_req,
     output reg         ctrl_rd_wr_n,
     output reg [63:0]  ctrl_addr,
-    input wire [DATA_WIDTH-1:0] ctrl_rd_data,
-    input wire         ctrl_rd_valid,
+    input  wire [DATA_WIDTH-1:0] ctrl_rd_data,
+    input  wire         ctrl_rd_valid,
     output reg [DATA_WIDTH-1:0] ctrl_wr_data,
-    input wire         ctrl_grant,
+    input  wire         ctrl_grant,
 
-    input wire [4:0]   doorbell_sq_tail [0:NUM_IO_QUEUES-1],
-    input wire [4:0]   doorbell_cq_head [0:NUM_IO_QUEUES-1],
-    input wire [4:0]   queue1_sq_tail,
+    input  wire [4:0]   doorbell_sq_tail [0:NUM_IO_QUEUES-1],
+    input  wire [4:0]   doorbell_cq_head [0:NUM_IO_QUEUES-1],
+    input  wire [4:0]   queue1_sq_tail,
 
-    input wire [63:0]  sq_base [0:NUM_IO_QUEUES-1],
-    input wire [63:0]  cq_base [0:NUM_IO_QUEUES-1],
-    input wire [15:0]  sq_size [0:NUM_IO_QUEUES-1],
-    input wire [15:0]  cq_size [0:NUM_IO_QUEUES-1],
+    input  wire [63:0]  sq_base [0:NUM_IO_QUEUES-1],
+    input  wire [63:0]  cq_base [0:NUM_IO_QUEUES-1],
+    input  wire [15:0]  sq_size [0:NUM_IO_QUEUES-1],
+    input  wire [15:0]  cq_size [0:NUM_IO_QUEUES-1],
 
     output reg [NUM_IO_QUEUES-1:0] interrupt_request,
-    output reg [31:0]  commands_processed
+    output reg [31:0]  commands_processed,
+    output reg io_done
 );
 
     reg [4:0] dev_sq_head [0:NUM_IO_QUEUES-1];
-    reg [4:0] dev_cq_tail [0:NUM_IO_QUEUES-1] = '{default:0};
+    reg [4:0] dev_cq_tail [0:NUM_IO_QUEUES-1];
     reg       cq_phase [0:NUM_IO_QUEUES-1];
 
     typedef enum logic [3:0] {
@@ -54,7 +55,9 @@ module io_processor #(
         if (!reset_n) begin
             for (i = 0; i < NUM_IO_QUEUES; i++) begin
                 dev_sq_head[i] <= 0;
+                dev_cq_tail[i] <= 0;
                 cq_phase[i]   <= 1'b1;
+                io_done <= 0;
             end
             state <= IDLE;
             ctrl_req <= 0;
@@ -64,17 +67,17 @@ module io_processor #(
             interrupt_request <= 0;
             commands_processed <= 0;
             delay_counter <= 0;
+            current_cid <= 0;
             current_q = -1;
         end else begin
-            // Default: bus idle, interrupt low
             ctrl_req <= 0;
             interrupt_request <= 0;
 
             case (state)
                 IDLE: begin
+                    io_done <= 0;
                     current_q = -1;
                     delay_counter <= 0;
-                    // Check for new commands in queue 1
                     if (dev_sq_head[1] != queue1_sq_tail) begin
                         current_q = 1;
                     end else begin
@@ -95,15 +98,18 @@ module io_processor #(
                 end
 
                 START_READ: begin
-                    // Wait one cycle for PCIe read to start
+                    ctrl_req <= 1;
+                    ctrl_rd_wr_n <= 0;
                     state <= WAIT_READ;
                 end
 
                 WAIT_READ: begin
+                    ctrl_req <= 1;
+                    ctrl_rd_wr_n <= 0;
                     if (ctrl_rd_valid) begin
                         cmd_data <= ctrl_rd_data;
                         current_cid <= ctrl_rd_data[31:16];
-                        // Build the completion early
+                        // Build completion
                         cpl_data <= 512'h0;
                         cpl_data[31:0]   <= 32'h0;
                         cpl_data[47:32]  <= dev_sq_head[current_q];
@@ -116,13 +122,11 @@ module io_processor #(
                 end
 
                 PROCESS_DELAY: begin
-                    $display("DELAY: counter=%0d", delay_counter);
-                    // Wait here to simulate SSD access time
+                    ctrl_req <= 0;
                     if (delay_counter < SSD_LATENCY_CYCLES) begin
                         delay_counter <= delay_counter + 1;
-                        state <= PROCESS_DELAY;   // stay
+                        state <= PROCESS_DELAY;
                     end else begin
-                        // Delay complete, write completion to CQ
                         ctrl_req <= 1;
                         ctrl_rd_wr_n <= 1;
                         ctrl_addr <= cq_base[current_q] + (dev_cq_tail[current_q] * 16);
@@ -132,11 +136,15 @@ module io_processor #(
                 end
 
                 WRITE_CPL: begin
-                    // stays one cycle, then go to pointer update
+                    ctrl_req <= 1;
+                    ctrl_rd_wr_n <= 1;
+                    io_done <= 1'b1;
+                    //$display("IO_PROC: io_done pulsed (completion written for queue %0d)", current_q);
                     state <= UPDATE_PTRS;
                 end
 
                 UPDATE_PTRS: begin
+                    ctrl_req <= 0;
                     dev_cq_tail[current_q] <= (dev_cq_tail[current_q] + 1) % cq_size[current_q];
                     if (dev_cq_tail[current_q] == cq_size[current_q] - 1)
                         cq_phase[current_q] <= ~cq_phase[current_q];

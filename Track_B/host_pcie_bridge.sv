@@ -1,6 +1,6 @@
 module host_pcie_bridge #(
     parameter QUEUE_SIZE          = 32,
-    parameter SSD_LATENCY_CYCLES = 5000
+    parameter SSD_LATENCY_CYCLES = 5000   // not used; handshake replaces it
 )(
     input  wire        clk,
     input  wire        reset_n,
@@ -26,28 +26,36 @@ module host_pcie_bridge #(
     input  wire [15:0]  queue_size,
     input  wire [63:0]  sq_tail_doorbell_addr,
     input  wire [63:0]  cq_head_doorbell_addr,
+    input  wire         io_processing_done,   // handshake from I/O processor
     output reg  [31:0]  commands_sent,
     output reg  [31:0]  completions_received
 );
-    // ── Command FIFO (stores full 512-bit command) ─
-    localparam FIFO_DEPTH = QUEUE_SIZE - 1;      // 31 entries
+
+    localparam FIFO_DEPTH = QUEUE_SIZE - 1;
     reg [511:0] cmd_fifo [0:FIFO_DEPTH-1];
     reg [5:0]   fifo_wptr, fifo_rptr;
-    reg [5:0]   fifo_cnt;                        // 0..FIFO_DEPTH
+    reg [5:0]   fifo_cnt;
     wire        fifo_empty = (fifo_cnt == 0);
     wire        fifo_full  = (fifo_cnt == FIFO_DEPTH);
+    assign      host_cmd_ready = !fifo_full && enable;
 
-    assign host_cmd_ready = !fifo_full && enable;
-
-    // ── Blocking processor ──────────────────────
-    typedef enum logic [2:0] { IDLE, WRITE_SQ, DOORBELL, WAIT_DELAY, SEND_CPL } state_t;
+    typedef enum logic [3:0] {
+        IDLE,
+        WRITE_SQ,
+        DOORBELL,
+        WAIT_IO_DONE,
+        SEND_CPL,
+        CQ_DOORBELL
+    } state_t;
     state_t state, next_state;
+
     reg [15:0] sq_tail;
+    reg [15:0] cq_head_local;
     reg [511:0] current_cmd;
     reg [15:0]  current_cid;
-    reg [31:0]  delay_counter;
 
     integer i;
+
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             fifo_wptr <= 0;
@@ -55,16 +63,16 @@ module host_pcie_bridge #(
             fifo_cnt  <= 0;
             for (i = 0; i < FIFO_DEPTH; i++) cmd_fifo[i] <= 512'b0;
 
-            state       <= IDLE;
-            sq_tail     <= 0;
-            commands_sent <= 0;
+            state          <= IDLE;
+            sq_tail        <= 0;
+            cq_head_local  <= 0;
+            commands_sent  <= 0;
             completions_received <= 0;
-            pcie_wr_en  <= 0;
-            pcie_rd_en  <= 0;
+            pcie_wr_en     <= 0;
+            pcie_rd_en     <= 0;
             host_cpl_valid <= 0;
-            delay_counter <= 0;
+            current_cid    <= 0;
         end else begin
-            // ── FIFO write ──────────────────────
             if (host_cmd_valid && host_cmd_ready) begin
                 cmd_fifo[fifo_wptr] <= host_cmd_data;
                 fifo_wptr <= fifo_wptr + 1;
@@ -72,7 +80,6 @@ module host_pcie_bridge #(
                 fifo_cnt  <= fifo_cnt + 1;
             end
 
-            // ── Processor FSM ───────────────────
             state <= next_state;
             pcie_wr_en  <= 0;
             pcie_rd_en  <= 0;
@@ -80,16 +87,13 @@ module host_pcie_bridge #(
 
             case (state)
                 IDLE: begin
-                    delay_counter <= 0;
                     if (!fifo_empty) begin
-                        // Pop next command
                         current_cmd <= cmd_fifo[fifo_rptr];
                         current_cid <= cmd_fifo[fifo_rptr][31:16];
+                        //$display("Bridge: processing CID=%0d", current_cid);
                         fifo_rptr <= fifo_rptr + 1;
                         if (fifo_rptr == FIFO_DEPTH-1) fifo_rptr <= 0;
                         fifo_cnt  <= fifo_cnt - 1;
-                        // Move to write SQ entry
-                        //$display("Bridge: processing command cid=%0d", cmd_fifo[fifo_rptr][31:16]);
                     end
                 end
 
@@ -108,12 +112,10 @@ module host_pcie_bridge #(
                     pcie_wr_data  <= {48'b0, next_tail};
                     pcie_wr_en    <= 1;
                     pcie_wr_be    <= 64'h0F;
-                    delay_counter <= 0;
                 end
 
-                WAIT_DELAY: begin
-                    if (delay_counter < SSD_LATENCY_CYCLES)
-                        delay_counter <= delay_counter + 1;
+                WAIT_IO_DONE: begin
+                    // no action; handshake handled in next_state
                 end
 
                 SEND_CPL: begin
@@ -121,22 +123,37 @@ module host_pcie_bridge #(
                     host_cpl_valid <= 1;
                     if (host_cpl_ready) begin
                         completions_received <= completions_received + 1;
+                        //$display("Bridge: completion sent for CID=%0d", current_cid);
                     end
+                end
+
+                CQ_DOORBELL: begin
+                    automatic logic [15:0] next_head = (cq_head_local == queue_size - 1) ? 0 : cq_head_local + 1;
+                    cq_head_local <= next_head;
+                    pcie_addr    <= cq_head_doorbell_addr;
+                    pcie_wr_data <= {48'b0, next_head};
+                    pcie_wr_en   <= 1;
+                    pcie_wr_be   <= 64'h0F;
+                    //$display("Bridge: CQ head doorbell updated to %0d", next_head);
                 end
             endcase
         end
     end
 
-    // ── Combinational next state ────────────────
     always_comb begin
         next_state = state;
         case (state)
-            IDLE:        if (!fifo_empty) next_state = WRITE_SQ;
-            WRITE_SQ:    next_state = DOORBELL;
-            DOORBELL:    next_state = WAIT_DELAY;
-            WAIT_DELAY:  if (delay_counter >= SSD_LATENCY_CYCLES) next_state = SEND_CPL;
-            SEND_CPL:    if (host_cpl_ready) next_state = IDLE;
-            default:     next_state = IDLE;
+            IDLE:          if (!fifo_empty) next_state = WRITE_SQ;
+            WRITE_SQ:      next_state = DOORBELL;
+            DOORBELL:      next_state = WAIT_IO_DONE;
+            WAIT_IO_DONE:  if (io_processing_done) begin
+                               //$display("Bridge: received io_done, delivering completion for CID=%0d", current_cid);
+                               next_state = SEND_CPL;
+                           end
+            SEND_CPL:      if (host_cpl_ready) next_state = CQ_DOORBELL;
+                           else next_state = SEND_CPL;
+            CQ_DOORBELL:   next_state = IDLE;
+            default:       next_state = IDLE;
         endcase
     end
 

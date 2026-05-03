@@ -8,25 +8,25 @@ module windows_storage_stack_core #(
 )(
     input wire clk,
     input wire reset_n,
-    
+
     // Command Input Interface
-    input wire cmd_in_valid,
+    input wire        cmd_in_valid,
     input wire [127:0] cmd_in_data,
-    output wire cmd_in_ready,
-    
+    output wire       cmd_in_ready,
+
     // Completion Output Interface
-    output wire completion_out_valid,
+    output wire       completion_out_valid,
     output wire [31:0] completion_status,
     output wire [31:0] completion_info,
-    
+
     // NVMe Physical Interface
-    output wire nvme_cmd_valid,
+    output wire        nvme_cmd_valid,
     output wire [511:0] nvme_cmd_data,
-    input wire nvme_cmd_ready,
-    input wire nvme_cpl_valid,
+    input wire         nvme_cmd_ready,
+    input wire         nvme_cpl_valid,
     input wire [127:0] nvme_cpl_data,
-    output wire nvme_cpl_ready,
-    
+    output wire        nvme_cpl_ready,
+
     // Real Performance Statistics
     output wire [63:0] stat_total_cycles,
     output wire [63:0] stat_total_commands,
@@ -40,7 +40,7 @@ module windows_storage_stack_core #(
     output wire [31:0] stat_nvme_cpls_received,
     output wire [63:0] stat_iops,
     output wire [63:0] stat_avg_throughput,
-    
+
     // Latency Statistics
     output wire [31:0] stat_min_latency,
     output wire [31:0] stat_max_latency,
@@ -48,48 +48,44 @@ module windows_storage_stack_core #(
     output wire [31:0] stat_p95_latency,
     output wire [31:0] stat_p99_latency,
     output wire [31:0] stat_commands_with_latency,
-    
+
     // DEBUG OUTPUTS
-    output wire [3:0] debug_blk_state,
+    output wire [3:0]  debug_blk_state,
     output wire [31:0] debug_blk_fifo_count,
     output wire [31:0] debug_blk_srb_fifo_count,
     output wire [15:0] debug_blk_current_irp_id,
-    output wire [3:0] debug_nvme_state,
+    output wire [3:0]  debug_nvme_state,
     output wire [31:0] debug_nvme_srb_fifo_count,
     output wire [31:0] debug_nvme_cpl_fifo_count,
     output wire [31:0] debug_nvme_queue_counts_sum,
-    output wire [15:0] completion_irp_id_out    
+    output wire [15:0] completion_irp_id_out
 );
-    
+
     // Internal interfaces
     wire [127:0] parsed_cmd_data;
-    wire parsed_cmd_valid;
-    wire parsed_cmd_ready;
-    
+    wire         parsed_cmd_valid;
+    wire         parsed_cmd_ready;
     wire [511:0] irp_data;
-    wire irp_valid;
-    wire irp_ready;
-    
+    wire         irp_valid;
+    wire         irp_ready;
     wire [1023:0] srb_data;
-    wire srb_valid;
-    wire srb_ready;
-    
-    wire [15:0] completion_irp_id;
-    wire completion_int_valid;
-    wire [31:0] completion_int_status;
-    wire [31:0] completion_int_info;
-    
+    wire         srb_valid;
+    wire         srb_ready;
+    wire [15:0]  completion_irp_id;
+    wire         completion_int_valid;
+    wire [31:0]  completion_int_status;
+    wire [31:0]  completion_int_info;
+
     wire [31:0] block_layer_cycles;
     wire [31:0] irps_processed;
-    
+
     wire [63:0] nvme_cmds_issued;
     wire [63:0] nvme_cpls_received;
     wire [31:0] nvme_queue_util;
-    
+
     wire [63:0] total_irps_created;
     wire [31:0] active_irp_count;
-    
-    // Statistics tracking signals
+
     wire command_received;
     wire command_is_write;
     wire [31:0] command_size_bytes;
@@ -97,18 +93,15 @@ module windows_storage_stack_core #(
     wire srb_created;
     wire nvme_cmd_issued;
     wire nvme_cpl_received;
-    
-    // Latency tracking signals
+
     reg [15:0] command_id_counter;
     wire [15:0] current_command_id;
     wire latency_track_enable;
-    
-    // Simplified command parser
+
     assign parsed_cmd_valid = cmd_in_valid;
-    assign parsed_cmd_data = cmd_in_data;
-    assign cmd_in_ready = parsed_cmd_ready;
-    
-    // Command ID assignment
+    assign parsed_cmd_data  = cmd_in_data;
+    assign cmd_in_ready     = parsed_cmd_ready;
+
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             command_id_counter <= 0;
@@ -116,22 +109,20 @@ module windows_storage_stack_core #(
             command_id_counter <= command_id_counter + 1;
         end
     end
-    
-    assign current_command_id = command_id_counter;
-    assign latency_track_enable = 1'b1; // Always track latency for all commands
-    
-    // Statistics event tracking
-    assign command_received = parsed_cmd_valid && parsed_cmd_ready;
-    assign command_is_write = parsed_cmd_data[0];
+
+    assign current_command_id   = command_id_counter;
+    assign latency_track_enable = 1'b1;
+
+    assign command_received  = parsed_cmd_valid && parsed_cmd_ready;
+    assign command_is_write  = parsed_cmd_data[0];
     assign command_size_bytes = parsed_cmd_data[95:64];
-    assign irp_created = irp_valid && irp_ready;
-    assign srb_created = srb_valid && srb_ready;
-    assign nvme_cmd_issued = nvme_cmd_valid && nvme_cmd_ready;
+    assign irp_created       = irp_valid && irp_ready;
+    assign srb_created       = srb_valid && srb_ready;
+    assign nvme_cmd_issued   = nvme_cmd_valid && nvme_cmd_ready;
     assign nvme_cpl_received = nvme_cpl_valid && nvme_cpl_ready;
 
     assign completion_irp_id_out = completion_irp_id;
-    
-    // Instantiate modules
+
     irp_manager #(
         .MAX_IRPS(256),
         .IRP_ID_WIDTH(8)
@@ -154,7 +145,7 @@ module windows_storage_stack_core #(
         .total_irps_created(total_irps_created),
         .active_irp_count(active_irp_count)
     );
-    
+
     block_layer_processor #(
         .QUEUE_DEPTH(64),
         .DATA_WIDTH(512)
@@ -180,7 +171,7 @@ module windows_storage_stack_core #(
         .debug_srb_fifo_count(debug_blk_srb_fifo_count),
         .debug_current_irp_id(debug_blk_current_irp_id)
     );
-    
+
     nvme_driver_core #(
         .NUM_IO_QUEUES(NUM_IO_QUEUES),
         .QUEUE_DEPTH(32),
@@ -218,8 +209,7 @@ module windows_storage_stack_core #(
         .debug_srb_fifo_wr_ptr(),
         .debug_srb_valid_bit()
     );
-    
-    // Enhanced Performance statistics collector with latency tracking
+
     performance_statistics #(
         .CYCLE_COUNTER_WIDTH(64),
         .MAX_COMMANDS(1000),
@@ -250,7 +240,7 @@ module windows_storage_stack_core #(
         .nvme_cpls_received_count(stat_nvme_cpls_received),
         .min_latency_cycles(stat_min_latency),
         .max_latency_cycles(stat_max_latency),
-        .total_latency_cycles(), // Internal only
+        .total_latency_cycles(),
         .average_latency_cycles(stat_avg_latency),
         .p95_latency_cycles(stat_p95_latency),
         .p99_latency_cycles(stat_p99_latency),
@@ -258,10 +248,9 @@ module windows_storage_stack_core #(
         .iops(stat_iops),
         .avg_throughput_Bps(stat_avg_throughput)
     );
-    
-    // Map completion output
+
     assign completion_out_valid = completion_int_valid;
-    assign completion_status = completion_int_status;
-    assign completion_info = completion_int_info;
-    
+    assign completion_status    = completion_int_status;
+    assign completion_info      = completion_int_info;
+
 endmodule

@@ -11,10 +11,10 @@ module nvme_doorbell_registers #(
     // PCIe Register Interface
     input wire [31:0] reg_addr,
     input wire [31:0] reg_wr_data,
-    input wire reg_wr_en,
-    input wire reg_rd_en,
+    input wire        reg_wr_en,
+    input wire        reg_rd_en,
     output reg [31:0] reg_rd_data,
-    output reg reg_rd_valid,
+    output reg        reg_rd_valid,
 
     // Queue Control Interfaces (update pulses)
     output reg [NUM_QUEUES-1:0] sq_tail_update,
@@ -34,21 +34,16 @@ module nvme_doorbell_registers #(
     output reg [31:0] doorbell_status
 );
 
-    // Doorbell Register Offsets
-    localparam SQ0_TDBL_BASE  = 32'h1000;      // I/O SQ tail doorbells start here (0x1000)
-    localparam ADMIN_SQ_TDBL  = 32'h1080;      // Admin SQ tail doorbell
-    localparam ADMIN_CQ_HDBL  = 32'h1084;      // Admin CQ head doorbell
+    localparam SQ0_TDBL_BASE  = 32'h1000;
+    localparam ADMIN_SQ_TDBL  = 32'h1080;
+    localparam ADMIN_CQ_HDBL  = 32'h1084;
+    localparam ZERO_WIDTH     = 32 - QUEUE_DEPTH_BITS;
 
-    // Precompute zero-padding width for read data
-    localparam ZERO_WIDTH = 32 - QUEUE_DEPTH_BITS;
-
-    // Shadow registers (for readback)
     reg [QUEUE_DEPTH_BITS-1:0] sq_tail_shadow [NUM_QUEUES];
     reg [QUEUE_DEPTH_BITS-1:0] cq_head_shadow [NUM_QUEUES];
     reg [QUEUE_DEPTH_BITS-1:0] admin_sq_tail_shadow;
     reg [QUEUE_DEPTH_BITS-1:0] admin_cq_head_shadow;
 
-    // Actual registers (for internal use)
     reg [QUEUE_DEPTH_BITS-1:0] sq_tail_reg [NUM_QUEUES];
     reg [QUEUE_DEPTH_BITS-1:0] cq_head_reg [NUM_QUEUES];
     reg [QUEUE_DEPTH_BITS-1:0] admin_sq_tail_reg;
@@ -82,53 +77,49 @@ module nvme_doorbell_registers #(
             reg_rd_valid          <= 0;
             reg_rd_data           <= 0;
         end else begin
-            // Clear pulses
             sq_tail_update        <= 0;
             cq_head_update        <= 0;
             admin_sq_tail_update  <= 0;
             admin_cq_head_update  <= 0;
             reg_rd_valid          <= 0;
 
-            // ───────────────────────────────── WRITES ────────────────────────────────
+            // ---- WRITES ----
             if (reg_wr_en) begin
-                // Admin doorbells (separate fixed offsets)
                 if (reg_addr[15:0] == ADMIN_SQ_TDBL[15:0]) begin
                     admin_sq_tail_shadow <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
                     admin_sq_tail_update <= 1'b1;
                     admin_sq_tail_value  <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
-                    $display("Doorbell: Admin SQ tail update, value=%0d", reg_wr_data[QUEUE_DEPTH_BITS-1:0]);
+                    //$display("Doorbell: Admin SQ tail update, value=%0d", reg_wr_data[QUEUE_DEPTH_BITS-1:0]);
                 end
                 else if (reg_addr[15:0] == ADMIN_CQ_HDBL[15:0]) begin
                     admin_cq_head_shadow <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
                     admin_cq_head_update <= 1'b1;
                     admin_cq_head_value  <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
-                    $display("*** DOORBELL: Admin CQ head update, value=%0d at time %t",
-                        reg_wr_data[QUEUE_DEPTH_BITS-1:0], $time);
+                    //$display("*** DOORBELL: Admin CQ head update, value=%0d at time %t",
+                    //    reg_wr_data[QUEUE_DEPTH_BITS-1:0], $time);
                 end
-                // I/O doorbells – unified decode using bit 2 to distinguish SQ/CQ
                 else if ((reg_addr[15:0] >= SQ0_TDBL_BASE[15:0]) &&
                          (reg_addr[15:0] <  (SQ0_TDBL_BASE[15:0] + NUM_QUEUES * 8))) begin
                     queue_idx = (reg_addr[15:0] - SQ0_TDBL_BASE[15:0]) / 8;
                     if (queue_idx < NUM_QUEUES) begin
-                        // SQ tail doorbell when reg_addr[2] == 0, CQ head when == 1
                         if (reg_addr[2] == 1'b0) begin
                             sq_tail_shadow[queue_idx] <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
                             sq_tail_update[queue_idx] <= 1'b1;
                             sq_tail_value[queue_idx]  <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
-                            $display("Doorbell: I/O SQ%0d tail update, value=%0d (addr %h)",
-                                queue_idx, reg_wr_data[QUEUE_DEPTH_BITS-1:0], reg_addr);
+                            //$display("Doorbell: I/O SQ%0d tail update, value=%0d (addr %h)",
+                            //    queue_idx, reg_wr_data[QUEUE_DEPTH_BITS-1:0], reg_addr);
                         end else begin
                             cq_head_shadow[queue_idx] <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
                             cq_head_update[queue_idx] <= 1'b1;
                             cq_head_value[queue_idx]  <= reg_wr_data[QUEUE_DEPTH_BITS-1:0];
-                            $display("*** DOORBELL: I/O CQ%0d head update, value=%0d (addr %h)",
-                                queue_idx, reg_wr_data[QUEUE_DEPTH_BITS-1:0], reg_addr);
+                            //$display("*** DOORBELL: I/O CQ%0d head update, value=%0d (addr %h)",
+                            //    queue_idx, reg_wr_data[QUEUE_DEPTH_BITS-1:0], reg_addr);
                         end
                     end
                 end
             end
 
-            // ───────────────────────────────── READS ────────────────────────────────
+            // ---- READS ----
             if (reg_rd_en) begin
                 reg_rd_valid <= 1'b1;
                 if (reg_addr[15:0] == ADMIN_SQ_TDBL[15:0])
@@ -147,10 +138,9 @@ module nvme_doorbell_registers #(
                         reg_rd_data <= 32'hFFFFFFFF;
                 end
                 else
-                    reg_rd_data <= 32'hDEADBEEF;   // unmapped region
+                    reg_rd_data <= 32'hDEADBEEF;
             end
 
-            // Update actual registers from shadow on the next cycle
             for (i = 0; i < NUM_QUEUES; i = i + 1) begin
                 if (sq_tail_update[i]) sq_tail_reg[i] <= sq_tail_shadow[i];
                 if (cq_head_update[i]) cq_head_reg[i] <= cq_head_shadow[i];
