@@ -1,43 +1,35 @@
 module host_pcie_bridge #(
-    parameter QUEUE_SIZE          = 32,
-    parameter SSD_LATENCY_CYCLES = 5000   // not used; handshake replaces it
+    parameter QUEUE_SIZE = 32
 )(
-    input  wire        clk,
-    input  wire        reset_n,
-    input  wire        enable,
-    input  wire [511:0] host_cmd_data,
-    input  wire        host_cmd_valid,
-    output wire        host_cmd_ready,
-    output reg  [127:0] host_cpl_data,
-    output reg         host_cpl_valid,
-    input  wire        host_cpl_ready,
-    output reg  [63:0]  pcie_addr,
-    output reg  [511:0] pcie_wr_data,
-    output reg         pcie_wr_en,
-    output reg  [63:0]  pcie_wr_be,
-    output reg         pcie_rd_en,
-    input  wire [511:0] pcie_rd_data,
-    input  wire         pcie_rd_valid,
-    input  wire         msi_wr_en,
-    input  wire [63:0]  msi_addr,
-    input  wire [31:0]  msi_data,
-    input  wire [63:0]  io_sq_base,
-    input  wire [63:0]  io_cq_base,
-    input  wire [15:0]  queue_size,
-    input  wire [63:0]  sq_tail_doorbell_addr,
-    input  wire [63:0]  cq_head_doorbell_addr,
-    input  wire         io_processing_done,   // handshake from I/O processor
-    output reg  [31:0]  commands_sent,
-    output reg  [31:0]  completions_received
+    input wire clk,
+    input wire reset,
+
+    input wire enable,
+    input wire [511:0] host_cmd_data,
+    input wire host_cmd_valid,
+    output wire host_cmd_ready,
+
+    output reg [127:0] host_cpl_data,
+    output reg host_cpl_valid,
+    input wire host_cpl_ready,
+
+    output reg [63:0] pcie_addr,
+    output reg [511:0] pcie_wr_data,
+    output reg pcie_wr_en,
+
+    input wire [63:0] io_sq_base,
+    input wire [63:0] sq_tail_doorbell_addr,
+    input wire [63:0] cq_head_doorbell_addr,
+    input wire io_processing_done
 );
 
     localparam FIFO_DEPTH = QUEUE_SIZE - 1;
     reg [511:0] cmd_fifo [0:FIFO_DEPTH-1];
-    reg [5:0]   fifo_wptr, fifo_rptr;
-    reg [5:0]   fifo_cnt;
-    wire        fifo_empty = (fifo_cnt == 0);
-    wire        fifo_full  = (fifo_cnt == FIFO_DEPTH);
-    assign      host_cmd_ready = !fifo_full && enable;
+    reg [5:0] fifo_wptr, fifo_rptr;
+    reg [5:0] fifo_cnt;
+    wire fifo_empty = (fifo_cnt == 0);
+    wire fifo_full = (fifo_cnt == FIFO_DEPTH);
+    assign host_cmd_ready = !fifo_full && enable;
 
     typedef enum logic [3:0] {
         IDLE,
@@ -52,88 +44,78 @@ module host_pcie_bridge #(
     reg [15:0] sq_tail;
     reg [15:0] cq_head_local;
     reg [511:0] current_cmd;
-    reg [15:0]  current_cid;
-
+    reg [15:0] current_cid;
     integer i;
 
-    always_ff @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
             fifo_wptr <= 0;
             fifo_rptr <= 0;
-            fifo_cnt  <= 0;
+            fifo_cnt <= 0;
             for (i = 0; i < FIFO_DEPTH; i++) cmd_fifo[i] <= 512'b0;
-
-            state          <= IDLE;
-            sq_tail        <= 0;
-            cq_head_local  <= 0;
-            commands_sent  <= 0;
-            completions_received <= 0;
-            pcie_wr_en     <= 0;
-            pcie_rd_en     <= 0;
+            sq_tail <= 0;
+            cq_head_local <= 0;
+            pcie_wr_en <= 0;
             host_cpl_valid <= 0;
-            current_cid    <= 0;
+            current_cid <= 0;
+            state <= IDLE;
         end else begin
+            //update fifo on valid and ready
             if (host_cmd_valid && host_cmd_ready) begin
                 cmd_fifo[fifo_wptr] <= host_cmd_data;
                 fifo_wptr <= fifo_wptr + 1;
                 if (fifo_wptr == FIFO_DEPTH-1) fifo_wptr <= 0;
-                fifo_cnt  <= fifo_cnt + 1;
+                fifo_cnt <= fifo_cnt + 1;
             end
 
             state <= next_state;
-            pcie_wr_en  <= 0;
-            pcie_rd_en  <= 0;
+            pcie_wr_en <= 0;
             host_cpl_valid <= 0;
 
             case (state)
-                IDLE: begin
+                IDLE: begin //when idle and fifo has smth, do work
                     if (!fifo_empty) begin
                         current_cmd <= cmd_fifo[fifo_rptr];
                         current_cid <= cmd_fifo[fifo_rptr][31:16];
                         //$display("Bridge: processing CID=%0d", current_cid);
                         fifo_rptr <= fifo_rptr + 1;
                         if (fifo_rptr == FIFO_DEPTH-1) fifo_rptr <= 0;
-                        fifo_cnt  <= fifo_cnt - 1;
+                        fifo_cnt <= fifo_cnt - 1;
                     end
                 end
 
-                WRITE_SQ: begin
-                    pcie_addr   <= io_sq_base + (sq_tail * 64);
+                WRITE_SQ: begin //write into pcie output
+                    pcie_addr <= io_sq_base + (sq_tail * 64);
                     pcie_wr_data <= current_cmd;
-                    pcie_wr_en  <= 1;
-                    pcie_wr_be  <= 64'hFFFFFFFFFFFFFFFF;
+                    pcie_wr_en <= 1;
                 end
 
-                DOORBELL: begin
-                    automatic logic [15:0] next_tail = (sq_tail == queue_size - 1) ? 0 : sq_tail + 1;
-                    sq_tail       <= next_tail;
-                    commands_sent <= commands_sent + 1;
-                    pcie_addr     <= sq_tail_doorbell_addr;
-                    pcie_wr_data  <= {48'b0, next_tail};
-                    pcie_wr_en    <= 1;
-                    pcie_wr_be    <= 64'h0F;
+                DOORBELL: begin //ring doorbell to start calculation
+                    automatic logic [15:0] next_tail = (sq_tail == QUEUE_SIZE - 1) ? 0 : sq_tail + 1;
+                    sq_tail <= next_tail;
+                    pcie_addr <= sq_tail_doorbell_addr;
+                    pcie_wr_data <= {48'b0, next_tail};
+                    pcie_wr_en <= 1;
                 end
 
-                WAIT_IO_DONE: begin
-                    // no action; handshake handled in next_state
+                WAIT_IO_DONE: begin //advance waiting code
+                    ;
                 end
 
-                SEND_CPL: begin
-                    host_cpl_data  <= {16'h0, current_cid, 16'h0, 16'h0, 64'h0};
+                SEND_CPL: begin //send completion, wait for ready signal
+                    host_cpl_data <= {16'h0, current_cid, 16'h0, 16'h0, 64'h0};
                     host_cpl_valid <= 1;
-                    if (host_cpl_ready) begin
-                        completions_received <= completions_received + 1;
-                        //$display("Bridge: completion sent for CID=%0d", current_cid);
-                    end
+                    /*if (host_cpl_ready) begin
+                        $display("Bridge: completion sent for CID=%0d", current_cid);
+                    end*/
                 end
 
-                CQ_DOORBELL: begin
-                    automatic logic [15:0] next_head = (cq_head_local == queue_size - 1) ? 0 : cq_head_local + 1;
+                CQ_DOORBELL: begin //send CQ doorbell to announce command finished processing
+                    automatic logic [15:0] next_head = (cq_head_local == QUEUE_SIZE - 1) ? 0 : cq_head_local + 1;
                     cq_head_local <= next_head;
-                    pcie_addr    <= cq_head_doorbell_addr;
+                    pcie_addr <= cq_head_doorbell_addr;
                     pcie_wr_data <= {48'b0, next_head};
-                    pcie_wr_en   <= 1;
-                    pcie_wr_be   <= 64'h0F;
+                    pcie_wr_en <= 1;
                     //$display("Bridge: CQ head doorbell updated to %0d", next_head);
                 end
             endcase
@@ -143,18 +125,14 @@ module host_pcie_bridge #(
     always_comb begin
         next_state = state;
         case (state)
-            IDLE:          if (!fifo_empty) next_state = WRITE_SQ;
-            WRITE_SQ:      next_state = DOORBELL;
-            DOORBELL:      next_state = WAIT_IO_DONE;
-            WAIT_IO_DONE:  if (io_processing_done) begin
-                               //$display("Bridge: received io_done, delivering completion for CID=%0d", current_cid);
-                               next_state = SEND_CPL;
-                           end
-            SEND_CPL:      if (host_cpl_ready) next_state = CQ_DOORBELL;
-                           else next_state = SEND_CPL;
-            CQ_DOORBELL:   next_state = IDLE;
-            default:       next_state = IDLE;
+            IDLE: if (!fifo_empty) next_state = WRITE_SQ;
+            WRITE_SQ: next_state = DOORBELL;
+            DOORBELL: next_state = WAIT_IO_DONE;
+            WAIT_IO_DONE: if (io_processing_done) next_state = SEND_CPL;
+            //$display("Bridge: received io_done, delivering completion for CID=%0d", current_cid);
+            SEND_CPL: next_state = host_cpl_ready ? CQ_DOORBELL: SEND_CPL;
+            CQ_DOORBELL: next_state = IDLE;
+            default: next_state = IDLE;
         endcase
     end
-
 endmodule
