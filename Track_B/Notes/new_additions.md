@@ -1,3 +1,5 @@
+for personal use
+
 Added doorbell registers (for submission/completion queue)
 Created physically contiguous memory for submission/completion queue
 Added PCIe BAR config

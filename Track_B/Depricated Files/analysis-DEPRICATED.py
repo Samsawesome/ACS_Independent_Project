@@ -136,8 +136,8 @@ def create_latency_comparison_chart(hardware_metrics, software_metrics):
     x = np.arange(len(metrics))
     width = 0.35
     
-    bars1 = ax1.bar(x - width/2, hardware_values, width, label='Hardware', color='#2E86AB')
-    bars2 = ax1.bar(x + width/2, software_values, width, label='Software', color='#A23B72')
+    bars1 = ax1.bar(x - width/2, hardware_values, width, label='New Project', color='#2E86AB')
+    bars2 = ax1.bar(x + width/2, software_values, width, label='Old Project', color='#A23B72')
     
     ax1.set_xlabel('Latency Metric', fontsize=12)
     ax1.set_ylabel('Latency (microseconds)', fontsize=12)
@@ -173,8 +173,8 @@ def create_latency_comparison_chart(hardware_metrics, software_metrics):
         software_metrics.get('max_latency_us', software_metrics['p99_latency_us'])
     ]
     
-    ax2.plot(latency_points, hw_latencies, marker='o', linewidth=2, label='Hardware', color='#2E86AB')
-    ax2.plot(latency_points, sw_latencies, marker='s', linewidth=2, label='Software', color='#A23B72')
+    ax2.plot(latency_points, hw_latencies, marker='o', linewidth=2, label='New Project', color='#2E86AB')
+    ax2.plot(latency_points, sw_latencies, marker='s', linewidth=2, label='Old Project', color='#A23B72')
     ax2.fill_between(latency_points, hw_latencies, alpha=0.2, color='#2E86AB')
     ax2.fill_between(latency_points, sw_latencies, alpha=0.2, color='#A23B72')
     
@@ -200,7 +200,7 @@ def create_performance_comparison_chart(hardware_metrics, software_metrics):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
     # Chart 1: IOPS comparison (log scale due to huge difference)
-    labels = ['Hardware', 'Software']
+    labels = ['New Project', 'Old Project']
     iops_values = [hardware_metrics['iops'], software_metrics['iops']]
     
     bars1 = ax1.bar(labels, iops_values, color=['#2E86AB', '#A23B72'])
@@ -268,7 +268,7 @@ def create_improvement_percentage_chart(improvements):
     
     bars = ax.bar(metrics, values, color=colors, edgecolor='black', linewidth=1.5)
     ax.set_ylabel('Improvement (%)', fontsize=12, fontweight='bold')
-    ax.set_title('Hardware Improvement Over Software (Log Scale)', fontsize=16, fontweight='bold')
+    ax.set_title('New Project Improvement Over Old Project (Log Scale)', fontsize=16, fontweight='bold')
     ax.axhline(y=0, color='black', linewidth=1.5, linestyle='-')
     
     # Set y-axis to log scale
@@ -315,7 +315,7 @@ def create_speedup_chart(improvements):
     
     bars = ax.bar(metrics, speedup_values, color=colors, edgecolor='black', linewidth=1.5)
     ax.set_ylabel('Speedup Factor (x)', fontsize=12, fontweight='bold')
-    ax.set_title('Hardware Speedup Over Software', fontsize=16, fontweight='bold')
+    ax.set_title('New Project Speedup Over Old Project', fontsize=16, fontweight='bold')
     ax.axhline(y=1, color='black', linewidth=1.5, linestyle='--', label='No Improvement (1x)')
     ax.set_yscale('log')  # Log scale due to huge speedup factors
     ax.grid(True, alpha=0.3, linestyle='--', which='both')
@@ -371,8 +371,8 @@ def create_comprehensive_summary_chart(hardware_metrics, software_metrics, impro
         software_metrics.get('max_latency_us', software_metrics['p99_latency_us'] * 1.5)
     ]
     
-    ax2.plot(latency_types, hw_latencies, marker='o', label='Hardware', linewidth=2, color='#2E86AB')
-    ax2.plot(latency_types, sw_latencies, marker='s', label='Software', linewidth=2, color='#A23B72')
+    ax2.plot(latency_types, hw_latencies, marker='o', label='New Project', linewidth=2, color='#2E86AB')
+    ax2.plot(latency_types, sw_latencies, marker='s', label='Old Project', linewidth=2, color='#A23B72')
     ax2.set_xlabel('Latency Type')
     ax2.set_ylabel('Latency (μs)')
     ax2.set_title('Latency Distribution', fontsize=14, fontweight='bold')
@@ -421,12 +421,12 @@ def print_summary_table(hardware_metrics, software_metrics, improvements):
     print("="*80)
     
     # Key takeaways
-    print("\nKEY TAKEAWAYS:")
+    '''print("\nKEY TAKEAWAYS:")
     print(f"1. Hardware is {improvements['speedup_iops']:,.0f}x faster in terms of IOPS")
     print(f"2. Hardware reduces p99 latency by {improvements['p99_reduction']:.1f}%")
     print(f"3. Hardware provides {improvements['throughput_increase']:,.1f}% higher throughput")
     print(f"4. Hardware achieves {hardware_metrics['iops']/1e6:.1f}M IOPS vs Software's {software_metrics['iops']:,.0f} IOPS")
-    print(f"5. Hardware p95 latency is {improvements['speedup_p95']:.1f}x better than software")
+    print(f"5. Hardware p95 latency is {improvements['speedup_p95']:.1f}x better than software")'''
 
 def main():
     print("Hardware vs Software Performance Analysis")
@@ -437,7 +437,7 @@ def main():
     hardware_metrics = extract_hardware_metrics('Outputs/hardware_output.txt')
     
     print("Extracting software metrics from software_output.txt...")
-    software_metrics = extract_software_metrics('Outputs/software_output.txt')
+    software_metrics = extract_hardware_metrics('Outputs/hardware_output-DEPRICATED.txt')
     
     # Calculate improvements
     improvements = calculate_improvements(hardware_metrics, software_metrics)

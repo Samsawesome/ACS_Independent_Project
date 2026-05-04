@@ -179,6 +179,13 @@ module tb_windows_storage_stack_complete;
     integer num_commands;
     integer command_index;
 
+    integer file_hw;
+    integer avg_us_int, avg_us_frac;
+    integer p95_us_int, p95_us_frac;
+    integer p99_us_int, p99_us_frac;
+    real avg_cycles_per_cmd, avg_bytes_per_cmd, bytes_per_cycle;
+    real efficiency, throughput_gbps;
+
     initial begin //100 MHz
         clk = 0;
         forever #5 clk = ~clk;
@@ -492,7 +499,6 @@ module tb_windows_storage_stack_complete;
             end
         join_any
         disable fork;
-
         $display("\n=== FINAL STATISTICS ===");
         $display("Total commands: %0d", stat_total_commands);
         $display("Total bytes: %0d", stat_total_bytes);
@@ -510,6 +516,77 @@ module tb_windows_storage_stack_complete;
         $display("p99 latency: %0d cycles", stat_p99_latency);
         $display("Total cycles: %0d cycles", stat_total_cycles);
 
+        //this file address should be changed when run on other machines to an appropriate directory
+        file_hw = $fopen("C:/Users/samsa/OneDrive/Desktop/Advance Computer Systems/ACS_Independent_Project/Track_B/Outputs/hardware_output.txt", "w");
+        if (file_hw == 0) begin
+            $display("Error: Could not create hardware_output.txt");
+            $finish;
+        end
+
+        avg_us_int = stat_avg_latency / 100;
+        avg_us_frac = stat_avg_latency % 100;
+        p95_us_int = stat_p95_latency / 100;
+        p95_us_frac = stat_p95_latency % 100;
+        p99_us_int = stat_p99_latency / 100;
+        p99_us_frac = stat_p99_latency % 100;
+
+        avg_cycles_per_cmd = $itor(stat_total_cycles) / $itor(stat_total_commands);
+        avg_bytes_per_cmd = $itor(stat_total_bytes)  / $itor(stat_total_commands);
+        bytes_per_cycle = $itor(stat_total_bytes) / $itor(stat_total_cycles);
+        efficiency = bytes_per_cycle / 512.0 * 100.0; //very very rough estimate
+        throughput_gbps = $itor(stat_avg_throughput) / 1e9;
+
+        $fdisplay(file_hw, "========================================================================");
+        $fdisplay(file_hw, "WINDOWS STORAGE STACK - HARDWARE SIMULATION RESULTS");
+        $fdisplay(file_hw, "========================================================================");
+        $fdisplay(file_hw, "Timestamp: %0d ns", $time);
+        $fdisplay(file_hw, "");
+        $fdisplay(file_hw, "1. COMMAND STATISTICS");
+        $fdisplay(file_hw, "   Total Commands Processed: %0d", stat_total_commands);
+        $fdisplay(file_hw, "   Commands from Input File: %0d", num_commands);
+        $fdisplay(file_hw, "   Read Commands:  %0d", stat_read_count);
+        $fdisplay(file_hw, "   Write Commands: %0d", stat_write_count);
+        $fdisplay(file_hw, "   Total Bytes:    %0d", stat_total_bytes);
+        $fdisplay(file_hw, "");
+        $fdisplay(file_hw, "2. PIPELINE STATISTICS");
+        $fdisplay(file_hw, "   IRPs Created:              %0d", stat_irps_created);
+        $fdisplay(file_hw, "   SRBs Created:              %0d", stat_srbs_created);
+        $fdisplay(file_hw, "   NVMe Commands Issued:      %0d", stat_nvme_cmds_issued);
+        $fdisplay(file_hw, "   NVMe Completions Received: %0d", stat_nvme_cpls_received);
+        $fdisplay(file_hw, "");
+        $fdisplay(file_hw, "3. LATENCY STATISTICS (CYCLES)");
+        $fdisplay(file_hw, "   Commands with Latency Data: %0d", num_commands);
+        $fdisplay(file_hw, "   SSD Latency:                5000 cycles");
+        $fdisplay(file_hw, "   Minimum Latency:            %0d cycles", stat_min_latency);
+        $fdisplay(file_hw, "   Maximum Latency:            %0d cycles", stat_max_latency);
+        $fdisplay(file_hw, "   Average Latency:            %0d cycles", stat_avg_latency);
+        $fdisplay(file_hw, "   95th Percentile (p95):      %0d cycles", stat_p95_latency);
+        $fdisplay(file_hw, "   99th Percentile (p99):      %0d cycles", stat_p99_latency);
+        $fdisplay(file_hw, "");
+        $fdisplay(file_hw, "4. LATENCY STATISTICS (MICROSECONDS @100MHz)");
+        $fdisplay(file_hw, "   Average Latency:            %0d.%02d us", avg_us_int, avg_us_frac);
+        $fdisplay(file_hw, "   95th Percentile (p95):      %0d.%02d us", p95_us_int, p95_us_frac);
+        $fdisplay(file_hw, "   99th Percentile (p99):      %0d.%02d us", p99_us_int, p99_us_frac);
+        $fdisplay(file_hw, "");
+        $fdisplay(file_hw, "5. PERFORMANCE METRICS");
+        $fdisplay(file_hw, "   Total Clock Cycles:         %0d", stat_total_cycles);
+        $fdisplay(file_hw, "   Average Cycles per Command: %0.2f", avg_cycles_per_cmd);
+        $fdisplay(file_hw, "   Average Bytes per Command:  %0.2f", avg_bytes_per_cmd);
+        $fdisplay(file_hw, "   Bytes per Cycle:            %0.4f", bytes_per_cycle);
+        $fdisplay(file_hw, "");
+        $fdisplay(file_hw, "6. THROUGHPUT ESTIMATES (100MHz Clock)");
+        $fdisplay(file_hw, "   Estimated IOPS:             %0d", stat_iops);
+        $fdisplay(file_hw, "   Average Throughput:         %0.2f GB/s", throughput_gbps);
+        $fdisplay(file_hw, "   System Efficiency:          %0.2f%%", efficiency);
+        $fdisplay(file_hw, "");
+        $fdisplay(file_hw, "7. COMPLETION STATUS");
+        if (stat_nvme_cpls_received == num_commands)
+            $fdisplay(file_hw, "   SUCCESS: All %0d commands completed", num_commands);
+        else
+            $fdisplay(file_hw, "   FAILURE: Only %0d completions out of %0d", stat_nvme_cpls_received, num_commands);
+
+        $fclose(file_hw);
+        $display("Hardware simulation results written to Outputs/hardware_output.txt");
         #100;
         $finish;
     end
